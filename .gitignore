@@ -1,0 +1,10 @@
+# Go build output
+/BubbleWorldClock
+*.exe
+*.test
+*.out
+
+# Editor and OS files
+.vscode/
+.idea/
+.DS_Store
