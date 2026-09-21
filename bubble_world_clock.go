@@ -48,7 +48,7 @@ func (m model) View() tea.View {
 			continue
 		}
 
-		view += fmt.Sprintf("%-12s %s\n", city.Name, m.now.In(location).Format("15:04:05"))
+		view += fmt.Sprintf("%-12s %s\n", city.Name, m.now.In(location).Format("Mon 02 Jan 2006 15:04:05"))
 	}
 	view += "\nPress q to quit.\n"
 	return tea.NewView(view)
