@@ -26,7 +26,11 @@ func TestViewRendersCityTimesAndInvalidZones(t *testing.T) {
 		{Name: "Broken", Timezone: "Not/AZone"},
 	})
 
-	view := m.View().Content
+	rendered := m.View()
+	if !rendered.AltScreen {
+		t.Fatal("rendered view does not use the alternate screen")
+	}
+	view := rendered.Content
 	if !strings.Contains(view, "London") {
 		t.Fatal("rendered view does not contain the valid city")
 	}

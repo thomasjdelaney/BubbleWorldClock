@@ -174,7 +174,9 @@ func (m model) View() tea.View {
 		lines = append(lines, "", helpView)
 	}
 
-	return tea.NewView(strings.Join(lines, "\n"))
+	view := tea.NewView(strings.Join(lines, "\n"))
+	view.AltScreen = true
+	return view
 }
 
 func truncate(value string, width int) string {
