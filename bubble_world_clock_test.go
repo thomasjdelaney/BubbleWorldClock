@@ -30,11 +30,29 @@ func TestViewRendersCityTimesAndInvalidZones(t *testing.T) {
 	if !strings.Contains(view, "London") {
 		t.Fatal("rendered view does not contain the valid city")
 	}
-	if !strings.Contains(view, "Fri 02 Jan 2026 15:04:05") {
-		t.Fatal("rendered view does not contain the formatted city time")
+	for _, value := range []string{"DAY", "DATE", "TIME", "Fri", "02 Jan 2026", "15:04:05"} {
+		if !strings.Contains(view, value) {
+			t.Fatalf("rendered view does not contain %q", value)
+		}
 	}
 	if !strings.Contains(view, "Broken") || !strings.Contains(view, "invalid time zone") {
 		t.Fatal("rendered view does not report the invalid timezone")
+	}
+}
+
+func TestViewAlternatesRowBackgrounds(t *testing.T) {
+	m := testModel([]city{
+		{Name: "London", Timezone: "Europe/London"},
+		{Name: "Tokyo", Timezone: "Asia/Tokyo"},
+		{Name: "New York", Timezone: "America/New_York"},
+	})
+
+	view := m.View().Content
+	if !strings.Contains(view, ";40m") {
+		t.Fatal("rendered rows do not include the dark alternate background")
+	}
+	if !strings.Contains(view, ";48;5;236m") {
+		t.Fatal("rendered rows do not include the gray alternate background")
 	}
 }
 

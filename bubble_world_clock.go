@@ -80,8 +80,24 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	return m, nil
 }
 
+func rowBackgroundStyle(index int) lipgloss.Style {
+	if index%2 == 0 {
+		return lipgloss.NewStyle().Background(lipgloss.Color("0"))
+	}
+	return lipgloss.NewStyle().Background(lipgloss.Color("236"))
+}
+
+func withRowBackground(style lipgloss.Style, index int) lipgloss.Style {
+	bg := rowBackgroundStyle(index)
+	return style.Background(bg.GetBackground())
+}
+
 func (m model) View() tea.View {
-	const clockFormat = "Mon 02 Jan 2006 15:04:05"
+	const (
+		dayFormat  = "Mon"
+		dateFormat = "02 Jan 2006"
+		timeFormat = "15:04:05"
+	)
 
 	width := m.width
 	if width == 0 {
@@ -92,6 +108,9 @@ func (m model) View() tea.View {
 		contentWidth = 1
 	}
 	compact := contentWidth < 34
+	dayWidth := lipgloss.Width(dayFormat)
+	dateWidth := lipgloss.Width(dateFormat)
+	timeWidth := lipgloss.Width(timeFormat)
 
 	nameWidth := 4
 	for _, city := range m.cities {
@@ -99,7 +118,7 @@ func (m model) View() tea.View {
 			nameWidth = cityWidth
 		}
 	}
-	maxNameWidth := contentWidth - lipgloss.Width(clockFormat) - 4
+	maxNameWidth := contentWidth - dayWidth - dateWidth - timeWidth - 6
 	if maxNameWidth < 1 {
 		maxNameWidth = 1
 	}
@@ -119,30 +138,35 @@ func (m model) View() tea.View {
 	if !compact {
 		lines = append(lines,
 			mutedStyle.Render(strings.Repeat("─", contentWidth)),
-			headerStyle.Render(fmt.Sprintf("%-*s  %s", nameWidth, "CITY", clockFormat)),
+			headerStyle.Render(fmt.Sprintf("%-*s  %-*s  %-*s  %-*s", nameWidth, "CITY", dayWidth, "DAY", dateWidth, "DATE", timeWidth, "TIME")),
 			borderStyle.Render(strings.Repeat("─", contentWidth)),
 		)
 	}
-	for _, city := range m.cities {
+	for i, city := range m.cities {
 		location, err := time.LoadLocation(city.Timezone)
 		if err != nil {
 			if compact {
-				lines = append(lines, mutedStyle.Render(truncate(city.Name+" invalid time zone", contentWidth)))
+				row := withRowBackground(mutedStyle, i).Render(truncate(city.Name+" invalid time zone", contentWidth))
+				lines = append(lines, row)
 				continue
 			}
 			name := truncate(city.Name, nameWidth)
-			lines = append(lines, cityStyle.Render(fmt.Sprintf("%-*s  ", nameWidth, name))+mutedStyle.Render("invalid time zone"))
+			row := withRowBackground(cityStyle, i).Render(fmt.Sprintf("%-*s  ", nameWidth, name)) + withRowBackground(mutedStyle, i).Render("invalid time zone")
+			lines = append(lines, row)
 			continue
 		}
 
 		if compact {
 			value := m.now.In(location).Format("15:04")
 			row := truncate(city.Name, contentWidth-lipgloss.Width(value)-1) + " " + value
-			lines = append(lines, timeStyle.Render(truncate(row, contentWidth)))
+			lines = append(lines, withRowBackground(timeStyle, i).Render(truncate(row, contentWidth)))
 			continue
 		}
 		name := truncate(city.Name, nameWidth)
-		lines = append(lines, cityStyle.Render(fmt.Sprintf("%-*s", nameWidth, name))+"  "+timeStyle.Render(m.now.In(location).Format(clockFormat)))
+		localTime := m.now.In(location)
+		row := withRowBackground(cityStyle, i).Render(fmt.Sprintf("%-*s", nameWidth, name)) + "  " +
+			withRowBackground(timeStyle, i).Render(fmt.Sprintf("%-*s  %-*s  %-*s", dayWidth, localTime.Format(dayFormat), dateWidth, localTime.Format(dateFormat), timeWidth, localTime.Format(timeFormat)))
+		lines = append(lines, row)
 	}
 
 	helpView := m.help.View(m.keys)

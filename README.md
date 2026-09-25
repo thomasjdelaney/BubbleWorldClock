@@ -1,7 +1,7 @@
 
 # Bubble World Clock
 
-A terminal world clock written in Go using [Bubble Tea](https://github.com/charmbracelet/bubbletea).
+A terminal world clock written in Go using [Bubble Tea](https://github.com/charmbracelet/bubbletea), [Bubbles](https://github.com/charmbracelet/bubbles), and [LipGloss](https://github.com/charmbracelet/lipgloss).
 
 ## Run
 
@@ -35,3 +35,5 @@ Edit `cities.json` to choose which cities are displayed. Each city needs a displ
 ## Reference
 
 - [Bubble Tea](https://github.com/charmbracelet/bubbletea)
+- [Bubbles](https://github.com/charmbracelet/bubbles)
+- [LipGloss](https://github.com/charmbracelet/lipgloss)
