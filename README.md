@@ -11,7 +11,8 @@ From the project directory:
 go run .
 ```
 
-Press `q` or `ctrl+c` to quit.
+Press `q` or `ctrl+c` to quit. Press `?` to toggle expanded help. The clock view
+responds to terminal resizing and keeps its layout within the available width.
 
 ## Configure Cities
 

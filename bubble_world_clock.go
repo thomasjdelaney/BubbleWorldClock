@@ -4,9 +4,13 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"strings"
 	"time"
 
+	"charm.land/bubbles/v2/help"
+	"charm.land/bubbles/v2/key"
 	tea "charm.land/bubbletea/v2"
+	"charm.land/lipgloss/v2"
 )
 
 type city struct {
@@ -16,9 +20,38 @@ type city struct {
 
 type tickMsg time.Time
 
+type keyMap struct {
+	Quit       key.Binding
+	ToggleHelp key.Binding
+}
+
+func newKeyMap() keyMap {
+	return keyMap{
+		Quit: key.NewBinding(
+			key.WithKeys("q", "ctrl+c"),
+			key.WithHelp("q", "quit"),
+		),
+		ToggleHelp: key.NewBinding(
+			key.WithKeys("?"),
+			key.WithHelp("?", "more help"),
+		),
+	}
+}
+
+func (k keyMap) ShortHelp() []key.Binding {
+	return []key.Binding{k.Quit, k.ToggleHelp}
+}
+
+func (k keyMap) FullHelp() [][]key.Binding {
+	return [][]key.Binding{{k.Quit, k.ToggleHelp}}
+}
+
 type model struct {
 	cities []city
 	now    time.Time
+	width  int
+	help   help.Model
+	keys   keyMap
 }
 
 func (m model) Init() tea.Cmd {
@@ -27,9 +60,17 @@ func (m model) Init() tea.Cmd {
 
 func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
+	case tea.WindowSizeMsg:
+		m.width = msg.Width
+		m.help.SetWidth(msg.Width)
+		return m, nil
 	case tea.KeyPressMsg:
-		if key := msg.String(); key == "q" || key == "ctrl+c" {
+		switch {
+		case key.Matches(msg, m.keys.Quit):
 			return m, tea.Quit
+		case key.Matches(msg, m.keys.ToggleHelp):
+			m.help.ShowAll = !m.help.ShowAll
+			return m, nil
 		}
 	case tickMsg:
 		m.now = time.Time(msg)
@@ -40,18 +81,86 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 }
 
 func (m model) View() tea.View {
-	view := "Bubble World Clock\n\n"
+	const clockFormat = "Mon 02 Jan 2006 15:04:05"
+
+	width := m.width
+	if width == 0 {
+		width = 80
+	}
+	contentWidth := width - 2
+	if contentWidth < 1 {
+		contentWidth = 1
+	}
+	compact := contentWidth < 34
+
+	nameWidth := 4
+	for _, city := range m.cities {
+		if cityWidth := lipgloss.Width(city.Name); cityWidth > nameWidth {
+			nameWidth = cityWidth
+		}
+	}
+	maxNameWidth := contentWidth - lipgloss.Width(clockFormat) - 4
+	if maxNameWidth < 1 {
+		maxNameWidth = 1
+	}
+	if nameWidth > maxNameWidth {
+		nameWidth = maxNameWidth
+	}
+
+	titleStyle := lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("86"))
+	headerStyle := lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("229"))
+	cityStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("117"))
+	timeStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("252"))
+	mutedStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("245"))
+	borderStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("238"))
+
+	title := truncate("Bubble World Clock", contentWidth)
+	lines := []string{titleStyle.Render(title)}
+	if !compact {
+		lines = append(lines,
+			mutedStyle.Render(strings.Repeat("─", contentWidth)),
+			headerStyle.Render(fmt.Sprintf("%-*s  %s", nameWidth, "CITY", clockFormat)),
+			borderStyle.Render(strings.Repeat("─", contentWidth)),
+		)
+	}
 	for _, city := range m.cities {
 		location, err := time.LoadLocation(city.Timezone)
 		if err != nil {
-			view += fmt.Sprintf("%s: invalid time zone\n", city.Name)
+			if compact {
+				lines = append(lines, mutedStyle.Render(truncate(city.Name+" invalid time zone", contentWidth)))
+				continue
+			}
+			name := truncate(city.Name, nameWidth)
+			lines = append(lines, cityStyle.Render(fmt.Sprintf("%-*s  ", nameWidth, name))+mutedStyle.Render("invalid time zone"))
 			continue
 		}
 
-		view += fmt.Sprintf("%-12s %s\n", city.Name, m.now.In(location).Format("Mon 02 Jan 2006 15:04:05"))
+		if compact {
+			value := m.now.In(location).Format("15:04")
+			row := truncate(city.Name, contentWidth-lipgloss.Width(value)-1) + " " + value
+			lines = append(lines, timeStyle.Render(truncate(row, contentWidth)))
+			continue
+		}
+		name := truncate(city.Name, nameWidth)
+		lines = append(lines, cityStyle.Render(fmt.Sprintf("%-*s", nameWidth, name))+"  "+timeStyle.Render(m.now.In(location).Format(clockFormat)))
 	}
-	view += "\nPress q to quit.\n"
-	return tea.NewView(view)
+
+	helpView := m.help.View(m.keys)
+	if helpView != "" {
+		lines = append(lines, "", helpView)
+	}
+
+	return tea.NewView(strings.Join(lines, "\n"))
+}
+
+func truncate(value string, width int) string {
+	if lipgloss.Width(value) <= width {
+		return value
+	}
+	if width <= 1 {
+		return "…"
+	}
+	return string([]rune(value)[:width-1]) + "…"
 }
 
 func main() {
@@ -61,7 +170,12 @@ func main() {
 		os.Exit(1)
 	}
 
-	if _, err := tea.NewProgram(model{cities: cities, now: time.Now()}).Run(); err != nil {
+	if _, err := tea.NewProgram(model{
+		cities: cities,
+		now:    time.Now(),
+		help:   help.New(),
+		keys:   newKeyMap(),
+	}).Run(); err != nil {
 		fmt.Println("Error:", err)
 		os.Exit(1)
 	}
