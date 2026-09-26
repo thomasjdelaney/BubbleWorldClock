@@ -1,28 +1,58 @@
 package main
 
 import (
+	"embed"
 	"encoding/json"
 	"fmt"
 	"os"
+	"path/filepath"
 	"strings"
 	"time"
 
+	_ "time/tzdata"
+
 	"charm.land/bubbles/v2/help"
 	"charm.land/bubbles/v2/key"
+	"charm.land/bubbles/v2/list"
+	"charm.land/bubbles/v2/textinput"
 	tea "charm.land/bubbletea/v2"
 	"charm.land/lipgloss/v2"
 )
 
+//go:embed cities.json data/city_catalog.json
+var bundledData embed.FS
+
 type city struct {
-	Name     string `json:"name"`
-	Timezone string `json:"timezone"`
+	GeoNameID   int64  `json:"geoname_id,omitempty"`
+	Name        string `json:"name"`
+	CountryCode string `json:"country_code,omitempty"`
+	Country     string `json:"country,omitempty"`
+	Admin1Code  string `json:"admin1_code,omitempty"`
+	Region      string `json:"region,omitempty"`
+	Timezone    string `json:"timezone"`
 }
 
 type tickMsg time.Time
 
+type screen uint8
+
+const (
+	clockScreen screen = iota
+	manageScreen
+	pickerScreen
+)
+
 type keyMap struct {
 	Quit       key.Binding
 	ToggleHelp key.Binding
+	Manage     key.Binding
+	AddCity    key.Binding
+	RemoveCity key.Binding
+	Back       key.Binding
+	CursorUp   key.Binding
+	CursorDown key.Binding
+	ChooseCity key.Binding
+	RetrySave  key.Binding
 }
 
 func newKeyMap() keyMap {
@@ -35,6 +65,38 @@ func newKeyMap() keyMap {
 			key.WithKeys("?"),
 			key.WithHelp("?", "more help"),
 		),
+		Manage: key.NewBinding(
+			key.WithKeys("m"),
+			key.WithHelp("m", "manage cities"),
+		),
+		AddCity: key.NewBinding(
+			key.WithKeys("a"),
+			key.WithHelp("a", "add city"),
+		),
+		RemoveCity: key.NewBinding(
+			key.WithKeys("d", "delete"),
+			key.WithHelp("d", "remove city"),
+		),
+		Back: key.NewBinding(
+			key.WithKeys("esc"),
+			key.WithHelp("esc", "back"),
+		),
+		CursorUp: key.NewBinding(
+			key.WithKeys("up", "k"),
+			key.WithHelp("↑/k", "move up"),
+		),
+		CursorDown: key.NewBinding(
+			key.WithKeys("down", "j"),
+			key.WithHelp("↓/j", "move down"),
+		),
+		ChooseCity: key.NewBinding(
+			key.WithKeys("enter"),
+			key.WithHelp("enter", "choose city"),
+		),
+		RetrySave: key.NewBinding(
+			key.WithKeys("s"),
+			key.WithHelp("s", "retry save"),
+		),
 	}
 }
 
@@ -43,15 +105,28 @@ func (k keyMap) ShortHelp() []key.Binding {
 }
 
 func (k keyMap) FullHelp() [][]key.Binding {
-	return [][]key.Binding{{k.Quit, k.ToggleHelp}}
+	return [][]key.Binding{
+		{k.Quit, k.ToggleHelp, k.Manage},
+		{k.AddCity, k.RemoveCity, k.Back},
+		{k.CursorUp, k.CursorDown, k.ChooseCity, k.RetrySave},
+	}
 }
 
 type model struct {
-	cities []city
-	now    time.Time
-	width  int
-	help   help.Model
-	keys   keyMap
+	cities     []city
+	catalog    []cityRecord
+	picker     list.Model
+	screen     screen
+	selected   int
+	configPath string
+	status     string
+	saving     bool
+	unsaved    bool
+	now        time.Time
+	width      int
+	height     int
+	help       help.Model
+	keys       keyMap
 }
 
 func (m model) Init() tea.Cmd {
@@ -62,22 +137,181 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
 	case tea.WindowSizeMsg:
 		m.width = msg.Width
+		m.height = msg.Height
 		m.help.SetWidth(msg.Width)
+		if m.screen == pickerScreen {
+			m.picker.SetSize(msg.Width, max(1, msg.Height-6))
+		}
 		return m, nil
 	case tea.KeyPressMsg:
+		return m.updateKey(msg)
+	case tickMsg:
+		m.now = time.Time(msg)
+		return m, tick()
+	case citySaveResultMsg:
+		m.saving = false
+		if msg.err != nil {
+			m.unsaved = true
+			m.status = "Save failed: " + msg.err.Error() + " (press s to retry)"
+		} else {
+			m.unsaved = false
+			m.status = "Changes saved"
+		}
+		return m, nil
+	}
+	if m.screen == pickerScreen {
+		var cmd tea.Cmd
+		m.picker, cmd = m.picker.Update(msg)
+		return m, cmd
+	}
+
+	return m, nil
+}
+
+func (m model) updateKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
+	if msg.String() == "ctrl+c" {
+		return m, tea.Quit
+	}
+
+	switch m.screen {
+	case pickerScreen:
+		if key.Matches(msg, m.keys.Back) {
+			m.screen = manageScreen
+			m.status = ""
+			return m, nil
+		}
+		if key.Matches(msg, m.keys.ChooseCity) {
+			m.picker.SetFilterText(m.picker.FilterValue())
+			selected, ok := m.picker.SelectedItem().(cityRecord)
+			if !ok {
+				m.picker.SetFilterState(list.Filtering)
+				m.status = "No matching city"
+				return m, nil
+			}
+			return m.addCity(selected)
+		}
+		var cmd tea.Cmd
+		m.picker, cmd = m.picker.Update(msg)
+		return m, cmd
+
+	case manageScreen:
 		switch {
 		case key.Matches(msg, m.keys.Quit):
 			return m, tea.Quit
 		case key.Matches(msg, m.keys.ToggleHelp):
 			m.help.ShowAll = !m.help.ShowAll
+		case key.Matches(msg, m.keys.Back):
+			m.screen = clockScreen
+		case key.Matches(msg, m.keys.AddCity):
+			return m.openPicker()
+		case key.Matches(msg, m.keys.RemoveCity):
+			return m.removeCity()
+		case key.Matches(msg, m.keys.CursorUp):
+			if m.selected > 0 {
+				m.selected--
+			}
+		case key.Matches(msg, m.keys.CursorDown):
+			if m.selected < len(m.cities)-1 {
+				m.selected++
+			}
+		case key.Matches(msg, m.keys.RetrySave) && m.unsaved && !m.saving:
+			return m, m.startSave()
+		}
+		return m, nil
+
+	default:
+		switch {
+		case key.Matches(msg, m.keys.Quit):
+			return m, tea.Quit
+		case key.Matches(msg, m.keys.ToggleHelp):
+			m.help.ShowAll = !m.help.ShowAll
+		case key.Matches(msg, m.keys.Manage):
+			m.screen = manageScreen
+			m.status = ""
+		}
+		return m, nil
+	}
+}
+
+func (m model) openPicker() (tea.Model, tea.Cmd) {
+	items := make([]list.Item, len(m.catalog))
+	for i, record := range m.catalog {
+		items[i] = record
+	}
+	delegate := list.NewDefaultDelegate()
+	delegate.ShowDescription = true
+	m.picker = list.New(items, delegate, max(1, m.width), max(1, m.height-6))
+	m.picker.Filter = cityFilter
+	m.picker.Title = "Add a city"
+	m.picker.SetShowHelp(false)
+	m.picker.SetStatusBarItemName("city", "cities")
+	m.picker.DisableQuitKeybindings()
+	m.picker.SetFilterText("")
+	m.picker.SetFilterState(list.Filtering)
+	m.screen = pickerScreen
+	m.status = ""
+	return m, textinput.Blink
+}
+
+func (m model) addCity(record cityRecord) (tea.Model, tea.Cmd) {
+	if m.saving {
+		m.status = "Wait for the current save to finish"
+		return m, nil
+	}
+	if _, err := time.LoadLocation(record.Timezone); err != nil {
+		m.status = "Catalog timezone is invalid: " + record.Timezone
+		return m, nil
+	}
+	newCity := city{
+		GeoNameID:   record.GeoNameID,
+		Name:        record.Name,
+		CountryCode: record.CountryCode,
+		Country:     record.Country,
+		Admin1Code:  record.Admin1Code,
+		Region:      record.Region,
+		Timezone:    record.Timezone,
+	}
+	for _, existing := range m.cities {
+		if sameCity(existing, newCity) {
+			m.screen = manageScreen
+			m.status = "That city is already on the clock"
 			return m, nil
 		}
-	case tickMsg:
-		m.now = time.Time(msg)
-		return m, tick()
 	}
+	m.cities = append(m.cities, newCity)
+	m.selected = len(m.cities) - 1
+	m.screen = manageScreen
+	return m, m.startSave()
+}
 
-	return m, nil
+func sameCity(first, second city) bool {
+	if first.GeoNameID != 0 && second.GeoNameID != 0 {
+		return first.GeoNameID == second.GeoNameID
+	}
+	return strings.EqualFold(first.Name, second.Name) && first.Timezone == second.Timezone
+}
+
+func (m model) removeCity() (tea.Model, tea.Cmd) {
+	if m.saving {
+		m.status = "Wait for the current save to finish"
+		return m, nil
+	}
+	if len(m.cities) == 0 {
+		m.status = "No cities to remove"
+		return m, nil
+	}
+	m.cities = append(m.cities[:m.selected], m.cities[m.selected+1:]...)
+	if m.selected >= len(m.cities) {
+		m.selected = max(0, len(m.cities)-1)
+	}
+	return m, m.startSave()
+}
+
+func (m *model) startSave() tea.Cmd {
+	m.saving = true
+	m.unsaved = true
+	m.status = "Saving changes..."
+	return saveCitiesCmd(m.configPath, m.cities)
 }
 
 func rowBackgroundStyle(index int) lipgloss.Style {
@@ -93,6 +327,31 @@ func withRowBackground(style lipgloss.Style, index int) lipgloss.Style {
 }
 
 func (m model) View() tea.View {
+	if m.width > 0 {
+		m.help.SetWidth(m.width)
+	}
+	var content string
+	switch m.screen {
+	case manageScreen:
+		content = m.viewManage()
+	case pickerScreen:
+		content = m.picker.View()
+		if m.status != "" {
+			content += "\n\n" + m.status
+		}
+		content += "\n\n" + truncate("type to filter | enter add | esc back", max(1, m.width))
+	default:
+		content = m.viewClock()
+	}
+	if helpView := m.help.View(m.keys); helpView != "" && m.screen != pickerScreen {
+		content += "\n\n" + helpView
+	}
+	view := tea.NewView(content)
+	view.AltScreen = true
+	return view
+}
+
+func (m model) viewClock() string {
 	const (
 		dayFormat    = "Mon"
 		dateFormat   = "02 Jan 2006"
@@ -115,8 +374,8 @@ func (m model) View() tea.View {
 	timeWidth := lipgloss.Width(timeFormat)
 
 	nameWidth := 4
-	for _, city := range m.cities {
-		if cityWidth := lipgloss.Width(city.Name); cityWidth > nameWidth {
+	for i := range m.cities {
+		if cityWidth := lipgloss.Width(m.cityLabel(i)); cityWidth > nameWidth {
 			nameWidth = cityWidth
 		}
 	}
@@ -144,15 +403,19 @@ func (m model) View() tea.View {
 			borderStyle.Render(strings.Repeat("─", contentWidth)),
 		)
 	}
+	if len(m.cities) == 0 {
+		lines = append(lines, mutedStyle.Render("No cities yet. Press m to manage cities."))
+	}
 	for i, city := range m.cities {
+		label := m.cityLabel(i)
 		location, err := time.LoadLocation(city.Timezone)
 		if err != nil {
 			if compact {
-				row := withRowBackground(mutedStyle, i).Render(truncate(city.Name+" invalid time zone", contentWidth))
+				row := withRowBackground(mutedStyle, i).Render(truncate(label+" invalid time zone", contentWidth))
 				lines = append(lines, row)
 				continue
 			}
-			name := truncate(city.Name, nameWidth)
+			name := truncate(label, nameWidth)
 			row := withRowBackground(cityStyle, i).Render(fmt.Sprintf("%-*s  ", nameWidth, name)) + withRowBackground(mutedStyle, i).Render("invalid time zone")
 			lines = append(lines, row)
 			continue
@@ -160,25 +423,74 @@ func (m model) View() tea.View {
 
 		if compact {
 			value := m.now.In(location).Format("15:04")
-			row := truncate(city.Name, contentWidth-lipgloss.Width(value)-1) + " " + value
+			row := truncate(label, contentWidth-lipgloss.Width(value)-1) + " " + value
 			lines = append(lines, withRowBackground(timeStyle, i).Render(truncate(row, contentWidth)))
 			continue
 		}
-		name := truncate(city.Name, nameWidth)
+		name := truncate(label, nameWidth)
 		localTime := m.now.In(location)
 		row := withRowBackground(cityStyle, i).Render(fmt.Sprintf("%-*s", nameWidth, name)) + "  " +
 			withRowBackground(timeStyle, i).Render(fmt.Sprintf("%-*s  %-*s  %-*s  %-*s", dayWidth, localTime.Format(dayFormat), dateWidth, localTime.Format(dateFormat), timeWidth, localTime.Format(timeFormat), offsetWidth, localTime.Format(offsetFormat)))
 		lines = append(lines, row)
 	}
+	lines = append(lines, mutedStyle.Render(truncate("m manage cities", contentWidth)))
 
-	helpView := m.help.View(m.keys)
-	if helpView != "" {
-		lines = append(lines, "", helpView)
+	return strings.Join(lines, "\n")
+}
+
+func (m model) viewManage() string {
+	width := m.width
+	if width <= 0 {
+		width = 80
 	}
+	contentWidth := max(1, width-2)
+	titleStyle := lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("86"))
+	mutedStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("245"))
+	selectedStyle := lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("229")).Background(lipgloss.Color("24"))
+	lines := []string{
+		titleStyle.Render("Manage cities"),
+		mutedStyle.Render(strings.Repeat("─", contentWidth)),
+	}
+	if len(m.cities) == 0 {
+		lines = append(lines, "No cities on your clock. Press a to search the city catalog.")
+	} else {
+		for i, city := range m.cities {
+			marker := "  "
+			style := lipgloss.NewStyle()
+			if i == m.selected {
+				marker = "> "
+				style = selectedStyle
+			}
+			line := marker + m.cityLabel(i) + "  " + city.Timezone
+			lines = append(lines, style.Render(truncate(line, contentWidth)))
+		}
+	}
+	if m.status != "" {
+		lines = append(lines, "", mutedStyle.Render(truncate(m.status, contentWidth)))
+	}
+	lines = append(lines, "", mutedStyle.Render(truncate("up/down select | a add | d remove | esc back", contentWidth)))
+	return strings.Join(lines, "\n")
+}
 
-	view := tea.NewView(strings.Join(lines, "\n"))
-	view.AltScreen = true
-	return view
+func (m model) cityLabel(index int) string {
+	if index < 0 || index >= len(m.cities) {
+		return ""
+	}
+	city := m.cities[index]
+	duplicates := 0
+	for _, candidate := range m.cities {
+		if candidate.Name == city.Name {
+			duplicates++
+		}
+	}
+	if duplicates < 2 {
+		return city.Name
+	}
+	context := strings.Join(nonEmpty([]string{city.Region, city.Country}), ", ")
+	if context == "" {
+		context = city.Timezone
+	}
+	return city.Name + " (" + context + ")"
 }
 
 func truncate(value string, width int) string {
@@ -192,35 +504,49 @@ func truncate(value string, width int) string {
 }
 
 func main() {
-	cities, err := loadCities("cities.json")
+	defaultData, err := bundledData.ReadFile("cities.json")
 	if err != nil {
-		fmt.Println("Error loading cities:", err)
+		fmt.Println("Error loading default cities:", err)
+		os.Exit(1)
+	}
+	var defaults []city
+	if err := json.Unmarshal(defaultData, &defaults); err != nil {
+		fmt.Println("Error decoding default cities:", err)
+		os.Exit(1)
+	}
+	configDirectory, err := os.UserConfigDir()
+	if err != nil {
+		fmt.Println("Error locating user config directory:", err)
+		os.Exit(1)
+	}
+	configPath := filepath.Join(configDirectory, "BubbleWorldClock", "cities.json")
+	cities, err := loadWatchlist(configPath, "cities.json", defaults)
+	if err != nil {
+		fmt.Println("Error loading city settings:", err)
+		os.Exit(1)
+	}
+	catalogData, err := bundledData.ReadFile("data/city_catalog.json")
+	if err != nil {
+		fmt.Println("Error loading city catalog:", err)
+		os.Exit(1)
+	}
+	var catalog []cityRecord
+	if err := json.Unmarshal(catalogData, &catalog); err != nil {
+		fmt.Println("Error decoding city catalog:", err)
 		os.Exit(1)
 	}
 
 	if _, err := tea.NewProgram(model{
-		cities: cities,
-		now:    time.Now(),
-		help:   help.New(),
-		keys:   newKeyMap(),
+		cities:     cities,
+		catalog:    catalog,
+		configPath: configPath,
+		now:        time.Now(),
+		help:       help.New(),
+		keys:       newKeyMap(),
 	}).Run(); err != nil {
 		fmt.Println("Error:", err)
 		os.Exit(1)
 	}
-}
-
-func loadCities(filename string) ([]city, error) {
-	contents, err := os.ReadFile(filename)
-	if err != nil {
-		return nil, err
-	}
-
-	var cities []city
-	if err := json.Unmarshal(contents, &cities); err != nil {
-		return nil, err
-	}
-
-	return cities, nil
 }
 
 func tick() tea.Cmd {

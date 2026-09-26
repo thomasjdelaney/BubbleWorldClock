@@ -1,6 +1,9 @@
 package main
 
 import (
+	"encoding/json"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -17,6 +20,250 @@ func testModel(cities []city) model {
 		width:  80,
 		help:   help.New(),
 		keys:   newKeyMap(),
+	}
+}
+
+func TestCityRecordProvidesSearchableLabels(t *testing.T) {
+	record := cityRecord{
+		Name:        "Munich",
+		ASCIIName:   "Muenchen",
+		CountryCode: "DE",
+		Country:     "Germany",
+		Admin1Code:  "02",
+		Region:      "Bavaria",
+		Timezone:    "Europe/Berlin",
+	}
+
+	if record.Title() != "Munich" {
+		t.Fatalf("title=%q, want city name", record.Title())
+	}
+	for _, searchable := range []string{"Munich", "Muenchen", "Bavaria", "Germany", "DE", "Europe/Berlin"} {
+		if !strings.Contains(record.FilterValue(), searchable) {
+			t.Errorf("filter value %q does not contain %q", record.FilterValue(), searchable)
+		}
+	}
+	for _, described := range []string{"Bavaria", "Germany", "Europe/Berlin"} {
+		if !strings.Contains(record.Description(), described) {
+			t.Errorf("description %q does not contain %q", record.Description(), described)
+		}
+	}
+}
+
+func TestLoadWatchlistMigratesLegacyConfigAndPrefersUserConfig(t *testing.T) {
+	directory := t.TempDir()
+	configPath := filepath.Join(directory, "config", "cities.json")
+	legacyPath := filepath.Join(directory, "cities.json")
+	defaults := []city{{Name: "Default", Timezone: "UTC"}}
+	legacy := []city{{Name: "Legacy", Timezone: "Europe/London"}}
+	contents, err := json.Marshal(legacy)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(legacyPath, contents, 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	loaded, err := loadWatchlist(configPath, legacyPath, defaults)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(loaded) != 1 || loaded[0].Name != "Legacy" {
+		t.Fatalf("loaded legacy cities = %#v", loaded)
+	}
+	if _, err := os.Stat(configPath); err != nil {
+		t.Fatalf("legacy config was not migrated: %v", err)
+	}
+
+	userConfig := []city{{Name: "User", Timezone: "Asia/Tokyo"}}
+	if err := saveCities(configPath, userConfig); err != nil {
+		t.Fatal(err)
+	}
+	loaded, err = loadWatchlist(configPath, legacyPath, defaults)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(loaded) != 1 || loaded[0].Name != "User" {
+		t.Fatalf("user config did not take precedence: %#v", loaded)
+	}
+}
+
+func TestLoadWatchlistUsesDefaultsAndRejectsMalformedConfig(t *testing.T) {
+	directory := t.TempDir()
+	configPath := filepath.Join(directory, "config", "cities.json")
+	legacyPath := filepath.Join(directory, "missing.json")
+	defaults := []city{{Name: "Default", Timezone: "UTC"}}
+
+	loaded, err := loadWatchlist(configPath, legacyPath, defaults)
+	if err != nil || len(loaded) != 1 || loaded[0].Name != "Default" {
+		t.Fatalf("default fallback: cities=%#v err=%v", loaded, err)
+	}
+	if err := os.MkdirAll(filepath.Dir(configPath), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(configPath, []byte("{"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := loadWatchlist(configPath, legacyPath, defaults); err == nil {
+		t.Fatal("malformed user config was silently replaced")
+	}
+}
+
+func TestSaveCitiesRoundTripsAndReportsFilesystemErrors(t *testing.T) {
+	directory := t.TempDir()
+	configPath := filepath.Join(directory, "config", "cities.json")
+	want := []city{{GeoNameID: 123, Name: "London", Country: "United Kingdom", Timezone: "Europe/London"}}
+	if err := saveCities(configPath, want); err != nil {
+		t.Fatal(err)
+	}
+	got, err := readCities(configPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got) != 1 || got[0] != want[0] {
+		t.Fatalf("round-trip cities = %#v, want %#v", got, want)
+	}
+
+	blockingPath := filepath.Join(directory, "not-a-directory")
+	if err := os.WriteFile(blockingPath, []byte("file"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := saveCities(filepath.Join(blockingPath, "cities.json"), want); err == nil {
+		t.Fatal("save unexpectedly succeeded through a regular file")
+	}
+}
+
+func TestPickerFiltersAndAddsCatalogCity(t *testing.T) {
+	m := testModel([]city{{Name: "London", Timezone: "Europe/London"}})
+	m.height = 24
+	m.configPath = filepath.Join(t.TempDir(), "cities.json")
+	m.catalog = []cityRecord{
+		{GeoNameID: 1, Name: "Munich", ASCIIName: "Muenchen", Country: "Germany", Timezone: "Europe/Berlin"},
+		{GeoNameID: 2, Name: "Tokyo", ASCIIName: "Tokyo", Country: "Japan", Timezone: "Asia/Tokyo"},
+	}
+
+	updated, cmd := m.openPicker()
+	if cmd == nil {
+		t.Fatal("opening the picker did not start text cursor blinking")
+	}
+	picker := updated.(model)
+	if got := len(picker.picker.VisibleItems()); got != len(m.catalog) {
+		t.Fatalf("unfiltered picker has %d visible items, want %d", got, len(m.catalog))
+	}
+	picker.picker.SetFilterText("Muenchen")
+	if got := len(picker.picker.VisibleItems()); got != 1 {
+		t.Fatalf("filtered visible items=%d, want 1", got)
+	}
+
+	updated, cmd = picker.Update(tea.KeyPressMsg(tea.Key{Code: tea.KeyEnter}))
+	added := updated.(model)
+	if added.screen != manageScreen || len(added.cities) != 2 {
+		t.Fatalf("selected catalog entry was not added: screen=%d cities=%#v", added.screen, added.cities)
+	}
+	if added.cities[1].GeoNameID != 1 || added.cities[1].Timezone != "Europe/Berlin" {
+		t.Fatalf("added city lost catalog identity or timezone: %#v", added.cities[1])
+	}
+	if cmd == nil {
+		t.Fatal("adding a city did not schedule persistence")
+	}
+	updated, _ = added.Update(cmd())
+	if updated.(model).unsaved {
+		t.Fatal("successful save left city changes marked unsaved")
+	}
+}
+
+func TestPickerTypingDoesNotQuitAndCatalogIDsPreventDuplicates(t *testing.T) {
+	entry := cityRecord{GeoNameID: 42, Name: "Example City", Country: "Example Country", Timezone: "UTC"}
+	m := testModel([]city{{GeoNameID: 42, Name: "Example City", Country: "Example Country", Timezone: "UTC"}})
+	m.height = 20
+	m.catalog = []cityRecord{entry}
+	updated, _ := m.openPicker()
+	picker := updated.(model)
+	updated, _ = picker.Update(tea.KeyPressMsg(tea.Key{Text: "q", Code: 'q'}))
+	picker = updated.(model)
+	if picker.screen != pickerScreen || picker.picker.FilterValue() != "q" {
+		t.Fatalf("typing q did not stay in the city filter: screen=%d filter=%q", picker.screen, picker.picker.FilterValue())
+	}
+
+	updated, cmd := picker.addCity(entry)
+	if cmd != nil || len(updated.(model).cities) != 1 {
+		t.Fatal("an already-selected GeoNames ID was added twice")
+	}
+}
+
+func TestPickerTypingFiltersCityNamesBeforeSelection(t *testing.T) {
+	m := testModel(nil)
+	m.height = 24
+	m.configPath = filepath.Join(t.TempDir(), "cities.json")
+	m.catalog = []cityRecord{
+		{GeoNameID: 1, Name: "Caen", ASCIIName: "Caen", Region: "Normandy", Country: "France", Timezone: "Europe/Paris"},
+		{GeoNameID: 2, Name: "Paris", ASCIIName: "Paris", Country: "France", Timezone: "Europe/Paris"},
+	}
+	updated, _ := m.openPicker()
+	picker := updated.(model)
+	for _, character := range "Paris" {
+		msg := tea.KeyPressMsg(tea.Key{Text: string(character), Code: character})
+		updated, _ = picker.Update(msg)
+		picker = updated.(model)
+	}
+	if picker.picker.FilterValue() != "Paris" {
+		t.Fatalf("typed filter=%q, want Paris", picker.picker.FilterValue())
+	}
+	updated, _ = picker.Update(tea.KeyPressMsg(tea.Key{Code: tea.KeyEnter}))
+	added := updated.(model)
+	if len(added.cities) != 1 || added.cities[0].GeoNameID != 2 {
+		t.Fatalf("selected result after typing Paris = %#v, want Paris (GeoNames ID 2)", added.cities)
+	}
+}
+
+func TestCityFilterPrioritizesCityNamesOverTimezoneMatches(t *testing.T) {
+	targets := []string{
+		cityRecord{Name: "Caen", ASCIIName: "Caen", Country: "France", Timezone: "Europe/Paris"}.FilterValue(),
+		cityRecord{Name: "Paris", ASCIIName: "Paris", Country: "France", Timezone: "Europe/Paris"}.FilterValue(),
+	}
+	matches := cityFilter("Paris", targets)
+	if len(matches) == 0 || matches[0].Index != 1 {
+		t.Fatalf("city-name result ranks = %#v, want Paris at index 1 first", matches)
+	}
+}
+
+func TestRemovingLastCityLeavesUsableEmptyState(t *testing.T) {
+	m := testModel([]city{{Name: "London", Timezone: "Europe/London"}})
+	m.screen = manageScreen
+	m.configPath = filepath.Join(t.TempDir(), "cities.json")
+	updated, cmd := m.removeCity()
+	removed := updated.(model)
+	if len(removed.cities) != 0 || removed.selected != 0 || cmd == nil {
+		t.Fatalf("last city removal failed: cities=%#v selected=%d cmd=%v", removed.cities, removed.selected, cmd != nil)
+	}
+	if !strings.Contains(removed.View().Content, "No cities on your clock") {
+		t.Fatal("empty management view does not offer a path to add cities")
+	}
+}
+
+func TestEmbeddedCityCatalogHasUniqueIDsAndValidZones(t *testing.T) {
+	contents, err := bundledData.ReadFile("data/city_catalog.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var catalog []cityRecord
+	if err := json.Unmarshal(contents, &catalog); err != nil {
+		t.Fatal(err)
+	}
+	if len(catalog) < 20000 {
+		t.Fatalf("catalog has only %d records", len(catalog))
+	}
+	ids := make(map[int64]struct{}, len(catalog))
+	for _, record := range catalog {
+		if record.GeoNameID <= 0 || record.Name == "" || record.Country == "" {
+			t.Fatalf("incomplete catalog record: %#v", record)
+		}
+		if _, ok := ids[record.GeoNameID]; ok {
+			t.Fatalf("duplicate GeoNames ID %d", record.GeoNameID)
+		}
+		ids[record.GeoNameID] = struct{}{}
+		if _, err := time.LoadLocation(record.Timezone); err != nil {
+			t.Fatalf("city %q has invalid timezone %q: %v", record.Name, record.Timezone, err)
+		}
 	}
 }
 
