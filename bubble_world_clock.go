@@ -94,9 +94,10 @@ func withRowBackground(style lipgloss.Style, index int) lipgloss.Style {
 
 func (m model) View() tea.View {
 	const (
-		dayFormat  = "Mon"
-		dateFormat = "02 Jan 2006"
-		timeFormat = "15:04:05"
+		dayFormat    = "Mon"
+		dateFormat   = "02 Jan 2006"
+		timeFormat   = "15:04:05"
+		offsetFormat = "-07:00"
 	)
 
 	width := m.width
@@ -107,7 +108,8 @@ func (m model) View() tea.View {
 	if contentWidth < 1 {
 		contentWidth = 1
 	}
-	compact := contentWidth < 34
+	offsetWidth := lipgloss.Width("UTC OFFSET")
+	compact := contentWidth < 44
 	dayWidth := lipgloss.Width(dayFormat)
 	dateWidth := lipgloss.Width(dateFormat)
 	timeWidth := lipgloss.Width(timeFormat)
@@ -118,7 +120,7 @@ func (m model) View() tea.View {
 			nameWidth = cityWidth
 		}
 	}
-	maxNameWidth := contentWidth - dayWidth - dateWidth - timeWidth - 6
+	maxNameWidth := contentWidth - dayWidth - dateWidth - timeWidth - offsetWidth - 8
 	if maxNameWidth < 1 {
 		maxNameWidth = 1
 	}
@@ -138,7 +140,7 @@ func (m model) View() tea.View {
 	if !compact {
 		lines = append(lines,
 			mutedStyle.Render(strings.Repeat("─", contentWidth)),
-			headerStyle.Render(fmt.Sprintf("%-*s  %-*s  %-*s  %-*s", nameWidth, "CITY", dayWidth, "DAY", dateWidth, "DATE", timeWidth, "TIME")),
+			headerStyle.Render(fmt.Sprintf("%-*s  %-*s  %-*s  %-*s  %-*s", nameWidth, "CITY", dayWidth, "DAY", dateWidth, "DATE", timeWidth, "TIME", offsetWidth, "UTC OFFSET")),
 			borderStyle.Render(strings.Repeat("─", contentWidth)),
 		)
 	}
@@ -165,7 +167,7 @@ func (m model) View() tea.View {
 		name := truncate(city.Name, nameWidth)
 		localTime := m.now.In(location)
 		row := withRowBackground(cityStyle, i).Render(fmt.Sprintf("%-*s", nameWidth, name)) + "  " +
-			withRowBackground(timeStyle, i).Render(fmt.Sprintf("%-*s  %-*s  %-*s", dayWidth, localTime.Format(dayFormat), dateWidth, localTime.Format(dateFormat), timeWidth, localTime.Format(timeFormat)))
+			withRowBackground(timeStyle, i).Render(fmt.Sprintf("%-*s  %-*s  %-*s  %-*s", dayWidth, localTime.Format(dayFormat), dateWidth, localTime.Format(dateFormat), timeWidth, localTime.Format(timeFormat), offsetWidth, localTime.Format(offsetFormat)))
 		lines = append(lines, row)
 	}
 

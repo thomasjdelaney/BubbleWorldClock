@@ -23,6 +23,8 @@ func testModel(cities []city) model {
 func TestViewRendersCityTimesAndInvalidZones(t *testing.T) {
 	m := testModel([]city{
 		{Name: "London", Timezone: "Europe/London"},
+		{Name: "Tokyo", Timezone: "Asia/Tokyo"},
+		{Name: "New York", Timezone: "America/New_York"},
 		{Name: "Broken", Timezone: "Not/AZone"},
 	})
 
@@ -34,13 +36,22 @@ func TestViewRendersCityTimesAndInvalidZones(t *testing.T) {
 	if !strings.Contains(view, "London") {
 		t.Fatal("rendered view does not contain the valid city")
 	}
-	for _, value := range []string{"DAY", "DATE", "TIME", "Fri", "02 Jan 2026", "15:04:05"} {
+	for _, value := range []string{"DAY", "DATE", "TIME", "UTC OFFSET", "Fri", "02 Jan 2026", "15:04:05", "+00:00", "+09:00", "-05:00"} {
 		if !strings.Contains(view, value) {
 			t.Fatalf("rendered view does not contain %q", value)
 		}
 	}
 	if !strings.Contains(view, "Broken") || !strings.Contains(view, "invalid time zone") {
 		t.Fatal("rendered view does not report the invalid timezone")
+	}
+}
+
+func TestViewRendersDaylightSavingOffset(t *testing.T) {
+	m := testModel([]city{{Name: "New York", Timezone: "America/New_York"}})
+	m.now = time.Date(2026, time.July, 2, 15, 4, 5, 0, time.UTC)
+
+	if view := m.View().Content; !strings.Contains(view, "-04:00") {
+		t.Fatalf("rendered view does not contain the summer UTC offset: %q", view)
 	}
 }
 
@@ -103,6 +114,28 @@ func TestViewStaysWithinNarrowWidth(t *testing.T) {
 	for _, line := range strings.Split(m.View().Content, "\n") {
 		if width := lipgloss.Width(line); width > m.width {
 			t.Fatalf("rendered line exceeds terminal width: %d > %d: %q", width, m.width, line)
+		}
+	}
+
+	m.width = 46
+	view := m.View().Content
+	if !strings.Contains(view, "UTC OFFSET") {
+		t.Fatal("full-width view does not include the UTC offset column")
+	}
+	for _, line := range strings.Split(view, "\n") {
+		if width := lipgloss.Width(line); width > m.width {
+			t.Fatalf("rendered line exceeds terminal width at full-table boundary: %d > %d: %q", width, m.width, line)
+		}
+	}
+
+	m.width = 45
+	view = m.View().Content
+	if strings.Contains(view, "UTC OFFSET") {
+		t.Fatal("compact view unexpectedly includes the full-table header")
+	}
+	for _, line := range strings.Split(view, "\n") {
+		if width := lipgloss.Width(line); width > m.width {
+			t.Fatalf("rendered line exceeds terminal width at compact boundary: %d > %d: %q", width, m.width, line)
 		}
 	}
 
