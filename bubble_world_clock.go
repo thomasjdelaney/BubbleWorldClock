@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 	"time"
 
@@ -34,6 +35,50 @@ type city struct {
 
 type tickMsg time.Time
 
+type sortMode string
+
+const (
+	sortNameAscending    sortMode = "name_asc"
+	sortNameDescending   sortMode = "name_desc"
+	sortOffsetAscending  sortMode = "offset_asc"
+	sortOffsetDescending sortMode = "offset_desc"
+)
+
+func (s sortMode) valid() bool {
+	switch s {
+	case sortNameAscending, sortNameDescending, sortOffsetAscending, sortOffsetDescending:
+		return true
+	default:
+		return false
+	}
+}
+
+func (s sortMode) label() string {
+	switch s {
+	case sortNameDescending:
+		return "city name (Z-A)"
+	case sortOffsetAscending:
+		return "UTC offset (most negative first)"
+	case sortOffsetDescending:
+		return "UTC offset (most positive first)"
+	default:
+		return "city name (A-Z)"
+	}
+}
+
+func (s sortMode) next() sortMode {
+	switch s {
+	case sortNameAscending:
+		return sortNameDescending
+	case sortNameDescending:
+		return sortOffsetAscending
+	case sortOffsetAscending:
+		return sortOffsetDescending
+	default:
+		return sortNameAscending
+	}
+}
+
 type screen uint8
 
 const (
@@ -53,6 +98,7 @@ type keyMap struct {
 	CursorDown key.Binding
 	ChooseCity key.Binding
 	RetrySave  key.Binding
+	Sort       key.Binding
 }
 
 func newKeyMap() keyMap {
@@ -97,6 +143,10 @@ func newKeyMap() keyMap {
 			key.WithKeys("s"),
 			key.WithHelp("s", "retry save"),
 		),
+		Sort: key.NewBinding(
+			key.WithKeys("o"),
+			key.WithHelp("o", "cycle sort order"),
+		),
 	}
 }
 
@@ -108,7 +158,7 @@ func (k keyMap) FullHelp() [][]key.Binding {
 	return [][]key.Binding{
 		{k.Quit, k.ToggleHelp, k.Manage},
 		{k.AddCity, k.RemoveCity, k.Back},
-		{k.CursorUp, k.CursorDown, k.ChooseCity, k.RetrySave},
+		{k.CursorUp, k.CursorDown, k.ChooseCity, k.RetrySave, k.Sort},
 	}
 }
 
@@ -119,6 +169,7 @@ type model struct {
 	screen     screen
 	selected   int
 	configPath string
+	sortMode   sortMode
 	status     string
 	saving     bool
 	unsaved    bool
@@ -147,6 +198,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m.updateKey(msg)
 	case tickMsg:
 		m.now = time.Time(msg)
+		m.sortCitiesPreservingSelection()
 		return m, tick()
 	case citySaveResultMsg:
 		m.saving = false
@@ -216,6 +268,10 @@ func (m model) updateKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 			}
 		case key.Matches(msg, m.keys.RetrySave) && m.unsaved && !m.saving:
 			return m, m.startSave()
+		case key.Matches(msg, m.keys.Sort):
+			m.sortMode = m.sortMode.next()
+			m.sortCitiesPreservingSelection()
+			return m, m.startSave()
 		}
 		return m, nil
 
@@ -280,6 +336,7 @@ func (m model) addCity(record cityRecord) (tea.Model, tea.Cmd) {
 	}
 	m.cities = append(m.cities, newCity)
 	m.selected = len(m.cities) - 1
+	m.sortCitiesPreservingSelection()
 	m.screen = manageScreen
 	return m, m.startSave()
 }
@@ -301,6 +358,11 @@ func (m model) removeCity() (tea.Model, tea.Cmd) {
 		return m, nil
 	}
 	m.cities = append(m.cities[:m.selected], m.cities[m.selected+1:]...)
+	if len(m.cities) > 0 {
+		m.selected = min(m.selected, len(m.cities)-1)
+	} else {
+		m.selected = 0
+	}
 	if m.selected >= len(m.cities) {
 		m.selected = max(0, len(m.cities)-1)
 	}
@@ -311,7 +373,70 @@ func (m *model) startSave() tea.Cmd {
 	m.saving = true
 	m.unsaved = true
 	m.status = "Saving changes..."
-	return saveCitiesCmd(m.configPath, m.cities)
+	return saveCitiesCmd(m.configPath, m.cities, m.sortMode)
+}
+
+func cityIdentity(value city) string {
+	if value.GeoNameID != 0 {
+		return fmt.Sprintf("id:%d", value.GeoNameID)
+	}
+	return "city:" + strings.ToLower(value.Name) + "\x00" + value.Timezone
+}
+
+func (m *model) sortCitiesPreservingSelection() {
+	if !m.sortMode.valid() {
+		m.sortMode = sortNameAscending
+	}
+	var selectedIdentity string
+	if m.selected >= 0 && m.selected < len(m.cities) {
+		selectedIdentity = cityIdentity(m.cities[m.selected])
+	}
+	sort.SliceStable(m.cities, func(first, second int) bool {
+		left, right := m.cities[first], m.cities[second]
+		leftLocation, leftErr := time.LoadLocation(left.Timezone)
+		rightLocation, rightErr := time.LoadLocation(right.Timezone)
+		leftOffset, rightOffset := 0, 0
+		if leftErr == nil {
+			_, leftOffset = m.now.In(leftLocation).Zone()
+		}
+		if rightErr == nil {
+			_, rightOffset = m.now.In(rightLocation).Zone()
+		}
+		if m.sortMode == sortOffsetAscending || m.sortMode == sortOffsetDescending {
+			if leftErr != rightErr {
+				return leftErr == nil
+			}
+			if leftOffset != rightOffset {
+				if m.sortMode == sortOffsetDescending {
+					return leftOffset > rightOffset
+				}
+				return leftOffset < rightOffset
+			}
+		}
+		leftName := strings.ToLower(left.Name)
+		rightName := strings.ToLower(right.Name)
+		if leftName != rightName {
+			if m.sortMode == sortNameDescending {
+				return leftName > rightName
+			}
+			return leftName < rightName
+		}
+		if left.Timezone != right.Timezone {
+			return left.Timezone < right.Timezone
+		}
+		return left.GeoNameID < right.GeoNameID
+	})
+	if selectedIdentity == "" {
+		m.selected = min(m.selected, max(0, len(m.cities)-1))
+		return
+	}
+	for index, value := range m.cities {
+		if cityIdentity(value) == selectedIdentity {
+			m.selected = index
+			return
+		}
+	}
+	m.selected = min(m.selected, max(0, len(m.cities)-1))
 }
 
 func rowBackgroundStyle(index int) lipgloss.Style {
@@ -468,7 +593,8 @@ func (m model) viewManage() string {
 	if m.status != "" {
 		lines = append(lines, "", mutedStyle.Render(truncate(m.status, contentWidth)))
 	}
-	lines = append(lines, "", mutedStyle.Render(truncate("up/down select | a add | d remove | esc back", contentWidth)))
+	lines = append(lines, "", mutedStyle.Render(truncate("sort: "+m.sortMode.label(), contentWidth)))
+	lines = append(lines, mutedStyle.Render(truncate("up/down select | o cycle sort order | a add | d remove | esc back", contentWidth)))
 	return strings.Join(lines, "\n")
 }
 
@@ -520,7 +646,7 @@ func main() {
 		os.Exit(1)
 	}
 	configPath := filepath.Join(configDirectory, "BubbleWorldClock", "cities.json")
-	cities, err := loadWatchlist(configPath, "cities.json", defaults)
+	watchlist, err := loadWatchlistConfig(configPath, "cities.json", defaults)
 	if err != nil {
 		fmt.Println("Error loading city settings:", err)
 		os.Exit(1)
@@ -536,14 +662,17 @@ func main() {
 		os.Exit(1)
 	}
 
-	if _, err := tea.NewProgram(model{
-		cities:     cities,
+	app := model{
+		cities:     watchlist.Cities,
 		catalog:    catalog,
 		configPath: configPath,
+		sortMode:   watchlist.Sort,
 		now:        time.Now(),
 		help:       help.New(),
 		keys:       newKeyMap(),
-	}).Run(); err != nil {
+	}
+	app.sortCitiesPreservingSelection()
+	if _, err := tea.NewProgram(app).Run(); err != nil {
 		fmt.Println("Error:", err)
 		os.Exit(1)
 	}

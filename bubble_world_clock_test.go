@@ -132,6 +132,88 @@ func TestSaveCitiesRoundTripsAndReportsFilesystemErrors(t *testing.T) {
 	}
 }
 
+func TestSortCitiesByNameAndOffsetPreservesSelection(t *testing.T) {
+	cities := []city{
+		{GeoNameID: 1, Name: "Tokyo", Timezone: "Asia/Tokyo"},
+		{GeoNameID: 2, Name: "London", Timezone: "Europe/London"},
+		{GeoNameID: 3, Name: "New York", Timezone: "America/New_York"},
+	}
+	tests := []struct {
+		name string
+		mode sortMode
+		want []string
+	}{
+		{name: "name ascending", mode: sortNameAscending, want: []string{"London", "New York", "Tokyo"}},
+		{name: "name descending", mode: sortNameDescending, want: []string{"Tokyo", "New York", "London"}},
+		{name: "offset ascending", mode: sortOffsetAscending, want: []string{"New York", "London", "Tokyo"}},
+		{name: "offset descending", mode: sortOffsetDescending, want: []string{"Tokyo", "London", "New York"}},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			m := testModel(append([]city(nil), cities...))
+			m.sortMode = test.mode
+			m.selected = 0
+			selectedID := m.cities[m.selected].GeoNameID
+			m.sortCitiesPreservingSelection()
+			for index, want := range test.want {
+				if m.cities[index].Name != want {
+					t.Fatalf("city[%d]=%q, want %q", index, m.cities[index].Name, want)
+				}
+			}
+			if m.cities[m.selected].GeoNameID != selectedID {
+				t.Fatalf("selected city ID=%d, want %d", m.cities[m.selected].GeoNameID, selectedID)
+			}
+		})
+	}
+}
+
+func TestSortPlacesInvalidTimezoneLast(t *testing.T) {
+	m := testModel([]city{
+		{Name: "Broken", Timezone: "Not/AZone"},
+		{Name: "London", Timezone: "Europe/London"},
+	})
+	m.sortMode = sortOffsetAscending
+	m.sortCitiesPreservingSelection()
+	if m.cities[0].Name != "London" || m.cities[1].Name != "Broken" {
+		t.Fatalf("sorted cities=%#v, want valid timezone first", m.cities)
+	}
+}
+
+func TestWatchlistRoundTripsSortModeAndLoadsLegacyArrays(t *testing.T) {
+	directory := t.TempDir()
+	configPath := filepath.Join(directory, "config", "cities.json")
+	want := watchlistConfig{
+		Cities: []city{{Name: "Tokyo", Timezone: "Asia/Tokyo"}},
+		Sort:   sortOffsetDescending,
+	}
+	if err := saveWatchlist(configPath, want); err != nil {
+		t.Fatal(err)
+	}
+	got, err := loadWatchlistConfig(configPath, filepath.Join(directory, "legacy.json"), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Sort != want.Sort || len(got.Cities) != 1 || got.Cities[0] != want.Cities[0] {
+		t.Fatalf("watchlist=%#v, want %#v", got, want)
+	}
+
+	legacyPath := filepath.Join(directory, "legacy.json")
+	legacyContents, err := json.Marshal(want.Cities)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(legacyPath, legacyContents, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	legacy, err := loadWatchlistConfig(filepath.Join(directory, "new", "cities.json"), legacyPath, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if legacy.Sort != sortNameAscending || len(legacy.Cities) != 1 {
+		t.Fatalf("legacy config=%#v, want name ascending default", legacy)
+	}
+}
+
 func TestPickerFiltersAndAddsCatalogCity(t *testing.T) {
 	m := testModel([]city{{Name: "London", Timezone: "Europe/London"}})
 	m.height = 24

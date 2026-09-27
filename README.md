@@ -19,7 +19,11 @@ responds to terminal resizing and keeps its layout within the available width.
 Press `m` to manage the clock's cities. Use `a` to open the searchable city
 catalog, type to filter by city, region, country, or timezone, and press `enter`
 to add the selected place. Use the up/down arrows or `j`/`k` to select a city in
-the management view, `d` to remove it, and `esc` to go back. Selected cities are
+the management view, `o` to cycle the sort order, `d` to remove a city, and
+`esc` to go back. The sort orders are city name A-Z, city name Z-A, UTC offset
+from most negative to most positive, and the reverse. UTC offset sorting uses
+the current offset, including daylight-saving changes. The selected city stays
+selected when sorting moves it, and the sort choice and selected cities are
 saved as you make changes.
 
 The city catalog works offline and uses each place's IANA timezone. User
