@@ -1,45 +1,77 @@
-
 # Bubble World Clock
 
-A terminal world clock written in Go with [Bubble Tea](https://github.com/charmbracelet/bubbletea).
+A terminal world clock built with [Bubble Tea](https://github.com/charmbracelet/bubbletea). Manage a list of cities and see their local dates, times, and UTC offsets. The city picker uses a bundled offline catalog.
 
 ## Install
 
-Download the archive for your operating system and CPU from the [latest release](https://github.com/thomasjdelaney/BubbleWorldClock/releases/latest), extract it, then run the `bubble-world-clock` executable (`bubble-world-clock.exe` on Windows). Linux releases also include `.deb` and `.rpm` packages.
+Installers download the latest stable release, verify its SHA-256 checksum, and install for the current user. They do not change saved city settings. Download the installer, inspect it, and run it locally; do not pipe a remote script directly into a shell.
 
-To run from source, install Go 1.26.6 or newer, then run:
+### Linux and macOS
+
+Requires `curl`, `tar`, and `sha256sum` or `shasum`.
+
+```sh
+curl -fL https://raw.githubusercontent.com/thomasjdelaney/BubbleWorldClock/master/scripts/install.sh -o install.sh
+less install.sh
+sh install.sh
+```
+
+To choose a release version or installation directory:
+
+```sh
+sh install.sh --version v1.2.3 --install-dir "$HOME/bin"
+```
+
+The default install directory is `~/.local/bin`. The installer adds it to `~/.profile` on Linux or `~/.zprofile` on macOS. Open a new terminal after installation. If you choose a custom directory, add it to PATH yourself.
+
+### Windows
+
+In PowerShell, download and inspect the script before running it:
+
+```powershell
+Invoke-WebRequest https://raw.githubusercontent.com/thomasjdelaney/BubbleWorldClock/master/scripts/install.ps1 -OutFile install.ps1
+Get-Content .\install.ps1
+.\install.ps1
+```
+
+If PowerShell blocks script execution, after inspecting the file allow scripts for this session only with `Set-ExecutionPolicy -Scope Process -ExecutionPolicy Bypass`, then run `.\install.ps1` again.
+
+To choose a release version or installation directory:
+
+```powershell
+.\install.ps1 -Version v1.2.3 -InstallDir "$env:LOCALAPPDATA\Programs\BubbleWorldClock"
+```
+
+The default directory is `%LOCALAPPDATA%\Programs\BubbleWorldClock`; the installer adds it to your user PATH. Open a new terminal after installation. Windows ARM64 is not currently supported.
+
+Linux users can also install from the `.deb` or `.rpm` packages on the [releases page](https://github.com/thomasjdelaney/BubbleWorldClock/releases).
+
+## Use
+
+Run `bubble-world-clock` (or `bubble-world-clock.exe` on Windows).
+
+- `q` or `Ctrl+C`: quit; `?`: show help; `m`: manage cities.
+- In city management, `a` adds a city, `d` removes one, and `o` changes sort order. Use the arrow keys or `j`/`k` to move.
+- In the city picker, type to filter, `Enter` to add a city, and `Esc` to go back.
+- If saving fails, press `s` to retry.
+
+Your city list is saved in the operating system's user config directory at `BubbleWorldClock/cities.json`. The catalog is derived from GeoNames `cities15000` under CC BY 4.0; see [data/README.md](data/README.md) for attribution.
+
+## Develop
+
+Install Go 1.26.6 or newer, then run:
 
 ```sh
 go run .
-```
-
-## Controls
-
-- `q` or `Ctrl+C`: quit; `?`: show help; `m`: manage cities.
-- In city management, press `a` to add a city, `d` to remove one, and `o` to change the sort order. Use the arrow keys or `j`/`k` to select a city.
-- In the city picker, type to filter and press `Enter` to add a city; press `Esc` to return.
-- Press `s` to retry saving if a save fails.
-
-The city picker searches the bundled offline catalog by city, region, country, or timezone. City settings are saved in the operating system's user config directory under `BubbleWorldClock/cities.json`.
-
-The catalog is derived from GeoNames `cities15000` and licensed under CC BY 4.0. See [data/README.md](data/README.md) for attribution and source details.
-
-## Development
-
-Run tests and static checks with:
-
-```sh
 go test ./...
 go vet ./...
 ```
 
-## Release (Maintainers)
+## Release (maintainers)
 
-Push a version tag to create a GitHub release. For example:
+Push a version tag to publish platform archives, Linux `.deb` and `.rpm` packages, and checksums:
 
 ```sh
 git tag -a v1.0.0 -m "v1.0.0"
 git push origin v1.0.0
 ```
-
-The release workflow publishes platform archives, Linux `.deb` and `.rpm` packages, and checksums.
