@@ -8,3 +8,9 @@
 .vscode/
 .idea/
 .DS_Store
+
+# GoReleaser files
+dist/
+completions/
+manpages/
+*.tar.gz

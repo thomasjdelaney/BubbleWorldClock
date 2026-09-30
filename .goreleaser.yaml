@@ -1,0 +1,60 @@
+version: 2
+
+project_name: BubbleWorldClock
+
+before:
+  hooks:
+    - go test ./...
+
+builds:
+  - id: bubbleworldclock
+    main: .
+    binary: bubble-world-clock
+    env:
+      - CGO_ENABLED=0
+    goos:
+      - linux
+      - windows
+      - darwin
+    goarch:
+      - amd64
+      - arm64
+    goamd64:
+      - v1
+    ignore:
+      - goos: windows
+        goarch: arm64
+
+archives:
+  - id: default
+    format: tar.gz
+    name_template: >-
+      {{ .ProjectName }}_
+      {{- .Version }}_
+      {{- title .Os }}_
+      {{- if eq .Arch "amd64" }}x86_64
+      {{- else if eq .Arch "arm64" }}arm64
+      {{- else }}{{ .Arch }}{{ end }}
+    files:
+      - LICENSE
+      - README.md
+
+checksum:
+  name_template: "checksums.txt"
+
+release:
+  github:
+    owner: thomasjdelaney
+    name: BubbleWorldClock
+  draft: false
+  prerelease: auto
+
+nfpms:
+  - package_name: bubbleworldclock
+    homepage: https://github.com/thomasjdelaney/BubbleWorldClock
+    maintainer: thomasjdelaney
+    description: A terminal world clock written in Go using Bubble Tea
+    license: MIT
+    formats:
+      - deb
+      - rpm
