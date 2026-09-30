@@ -1,59 +1,45 @@
 
 # Bubble World Clock
 
-A terminal world clock written in Go using [Bubble Tea](https://github.com/charmbracelet/bubbletea), [Bubbles](https://github.com/charmbracelet/bubbles), and [LipGloss](https://github.com/charmbracelet/lipgloss).
+A terminal world clock written in Go with [Bubble Tea](https://github.com/charmbracelet/bubbletea).
 
-## Run
+## Install
 
-Requires Go 1.26.6 or newer.
+Download the archive for your operating system and CPU from the [latest release](https://github.com/thomasjdelaney/BubbleWorldClock/releases/latest), extract it, then run the `bubble-world-clock` executable (`bubble-world-clock.exe` on Windows). Linux releases also include `.deb` and `.rpm` packages.
 
-From the project directory:
+To run from source, install Go 1.26.6 or newer, then run:
 
 ```sh
 go run .
 ```
 
-Press `q` or `ctrl+c` to quit. Press `?` to toggle expanded help. The clock view
-responds to terminal resizing and keeps its layout within the available width.
+## Controls
 
-## Manage Cities
+- `q` or `Ctrl+C`: quit; `?`: show help; `m`: manage cities.
+- In city management, press `a` to add a city, `d` to remove one, and `o` to change the sort order. Use the arrow keys or `j`/`k` to select a city.
+- In the city picker, type to filter and press `Enter` to add a city; press `Esc` to return.
+- Press `s` to retry saving if a save fails.
 
-Press `m` to open city management.
+The city picker searches the bundled offline catalog by city, region, country, or timezone. City settings are saved in the operating system's user config directory under `BubbleWorldClock/cities.json`.
 
-- **Add:** Press `a`, type to filter the offline catalog by city, region,
-	country, or timezone, then press `enter`.
-- **Select or remove:** Use the up/down arrows or `j`/`k` to select a city;
-	press `d` to remove it.
-- **Sort:** Press `o` to cycle city name A-Z, city name Z-A, UTC offset ascending,
-	and UTC offset descending. Offset sorting uses the current offset, including
-	daylight-saving changes. The selection stays with the same city when sorting.
-- **Return:** Press `esc` to go back.
-
-Cities and sort order are saved automatically. If saving fails, press `s` to
-retry.
-
-The catalog uses each city's IANA timezone. Settings are stored in the operating
-system's user config directory, under `BubbleWorldClock/cities.json`. On first
-run, an existing user settings file takes priority; otherwise a valid
-`cities.json` in the current working directory is imported once, or the embedded
-starter list is used. The running program never modifies the repository's
-`cities.json`.
-
-The bundled city catalog is derived from [GeoNames](https://www.geonames.org/)
-`cities15000` and is licensed under CC BY 4.0. See [data/README.md](data/README.md)
-for attribution, source details, and regeneration instructions.
+The catalog is derived from GeoNames `cities15000` and licensed under CC BY 4.0. See [data/README.md](data/README.md) for attribution and source details.
 
 ## Development
 
-Run the tests and static checks with:
+Run tests and static checks with:
 
 ```sh
 go test ./...
 go vet ./...
 ```
 
-## Reference
+## Release (Maintainers)
 
-- [Bubble Tea](https://github.com/charmbracelet/bubbletea)
-- [Bubbles](https://github.com/charmbracelet/bubbles)
-- [LipGloss](https://github.com/charmbracelet/lipgloss)
+Push a version tag to create a GitHub release. For example:
+
+```sh
+git tag -a v1.0.0 -m "v1.0.0"
+git push origin v1.0.0
+```
+
+The release workflow publishes platform archives, Linux `.deb` and `.rpm` packages, and checksums.
