@@ -297,6 +297,32 @@ func TestPickerTypingFiltersCityNamesBeforeSelection(t *testing.T) {
 	}
 }
 
+func TestPickerAddsCurrentlyHighlightedDuplicateNameEntry(t *testing.T) {
+	m := testModel(nil)
+	m.height = 24
+	m.configPath = filepath.Join(t.TempDir(), "cities.json")
+	m.catalog = []cityRecord{
+		{GeoNameID: 1, Name: "Los Angeles", ASCIIName: "Los Angeles", Region: "California", Country: "United States", Timezone: "America/Los_Angeles"},
+		{GeoNameID: 2, Name: "Los Angeles", ASCIIName: "Los Angeles", Region: "Madrid", Country: "Spain", Timezone: "Europe/Madrid"},
+	}
+	updated, _ := m.openPicker()
+	picker := updated.(model)
+	picker.picker.SetFilterText("Los Angeles")
+	if len(picker.picker.VisibleItems()) != 2 {
+		t.Fatalf("filtered visible items=%d, want 2", len(picker.picker.VisibleItems()))
+	}
+	updated, _ = picker.Update(tea.KeyPressMsg(tea.Key{Code: tea.KeyDown}))
+	picker = updated.(model)
+	if picker.picker.SelectedItem() == nil || picker.picker.Index() != 1 {
+		t.Fatalf("selected index=%d, want second filtered entry highlighted", picker.picker.Index())
+	}
+	updated, _ = picker.Update(tea.KeyPressMsg(tea.Key{Code: tea.KeyEnter}))
+	added := updated.(model)
+	if len(added.cities) != 1 || added.cities[0].GeoNameID != 2 {
+		t.Fatalf("selected duplicate-name entry = %#v, want GeoNames ID 2 (Madrid)", added.cities)
+	}
+}
+
 func TestCityFilterPrioritizesCityNamesOverTimezoneMatches(t *testing.T) {
 	targets := []string{
 		cityRecord{Name: "Caen", ASCIIName: "Caen", Country: "France", Timezone: "Europe/Paris"}.FilterValue(),

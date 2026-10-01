@@ -233,8 +233,18 @@ func (m model) updateKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 			return m, nil
 		}
 		if key.Matches(msg, m.keys.ChooseCity) {
+			selectedBefore, hadSelection := m.picker.SelectedItem().(cityRecord)
 			m.picker.SetFilterText(m.picker.FilterValue())
 			selected, ok := m.picker.SelectedItem().(cityRecord)
+			if hadSelection && ok && cityRecordIdentity(selectedBefore) != cityRecordIdentity(selected) {
+				for _, item := range m.picker.VisibleItems() {
+					candidate, okCandidate := item.(cityRecord)
+					if okCandidate && cityRecordIdentity(candidate) == cityRecordIdentity(selectedBefore) {
+						selected = candidate
+						break
+					}
+				}
+			}
 			if !ok {
 				m.picker.SetFilterState(list.Filtering)
 				m.status = "No matching city"
@@ -339,6 +349,13 @@ func (m model) addCity(record cityRecord) (tea.Model, tea.Cmd) {
 	m.sortCitiesPreservingSelection()
 	m.screen = manageScreen
 	return m, m.startSave()
+}
+
+func cityRecordIdentity(value cityRecord) string {
+	if value.GeoNameID != 0 {
+		return fmt.Sprintf("id:%d", value.GeoNameID)
+	}
+	return "city:" + strings.ToLower(value.Name) + "\x00" + strings.ToLower(value.Country) + "\x00" + value.Timezone
 }
 
 func sameCity(first, second city) bool {
