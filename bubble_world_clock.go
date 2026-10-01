@@ -647,6 +647,15 @@ func truncate(value string, width int) string {
 }
 
 func main() {
+	if len(os.Args) > 1 {
+		switch os.Args[1] {
+		case "update":
+			os.Exit(runUpdate())
+		case "--help", "-h", "help":
+			fmt.Println("Usage: bubble-world-clock [update]")
+			return
+		}
+	}
 	defaultData, err := bundledData.ReadFile("cities.json")
 	if err != nil {
 		fmt.Println("Error loading default cities:", err)
