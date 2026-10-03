@@ -334,6 +334,41 @@ func TestCityFilterPrioritizesCityNamesOverTimezoneMatches(t *testing.T) {
 	}
 }
 
+func TestCityFilterSupportsCountryAndTimezonePrefixes(t *testing.T) {
+	targets := []string{
+		cityRecord{Name: "Berlin", Country: "Germany", CountryCode: "DE", Timezone: "Europe/Paris"}.FilterValue(),
+		cityRecord{Name: "Paris", ASCIIName: "Paris", Country: "France", CountryCode: "FR", Timezone: "Europe/Berlin"}.FilterValue(),
+		cityRecord{Name: "New York", Country: "United States", CountryCode: "US", Timezone: "America/New_York"}.FilterValue(),
+	}
+	tests := []struct {
+		name string
+		term string
+		want []int
+	}{
+		{name: "country name with spaces", term: "country:United States", want: []int{2}},
+		{name: "country code case insensitive", term: "CoUnTrY:us", want: []int{2}},
+		{name: "timezone partial value", term: "tz:Paris", want: []int{0}},
+		{name: "country does not match timezone", term: "country:Paris"},
+		{name: "timezone does not match country", term: "tz:Germany"},
+		{name: "empty country operand", term: "country:", want: []int{0, 1, 2}},
+		{name: "unknown prefix is an ordinary query", term: "place:Berlin"},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			matches := cityFilter(test.term, targets)
+			if len(matches) != len(test.want) {
+				t.Fatalf("matches for %q = %#v, want indexes %v", test.term, matches, test.want)
+			}
+			for index, want := range test.want {
+				if matches[index].Index != want {
+					t.Errorf("match[%d].Index = %d, want %d", index, matches[index].Index, want)
+				}
+			}
+		})
+	}
+}
+
 func TestRemovingLastCityLeavesUsableEmptyState(t *testing.T) {
 	m := testModel([]city{{Name: "London", Timezone: "Europe/London"}})
 	m.screen = manageScreen
@@ -519,9 +554,10 @@ func TestPickerKeepsFilteringInsteadOfShowingGlobalHelp(t *testing.T) {
 	if !pickerModel.help.ShowAll {
 		t.Fatal("opening the picker changed the expanded-help state")
 	}
+	pickerModel.width = 40
 	pickerView := pickerModel.View().Content
-	if !strings.Contains(pickerView, "type to filter | enter add | esc back") {
-		t.Fatal("picker inline instructions were not rendered")
+	if !strings.Contains(pickerView, "country:Japan") || !strings.Contains(pickerView, "tz:Paris") {
+		t.Fatal("picker filter examples were not visible at a narrow width")
 	}
 	if strings.Contains(pickerView, "manage cities") || strings.Contains(pickerView, "more help") {
 		t.Fatal("global help was rendered over the picker")

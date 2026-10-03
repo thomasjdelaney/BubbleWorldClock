@@ -491,7 +491,7 @@ func (m model) View() tea.View {
 		if m.status != "" {
 			content += "\n\n" + m.status
 		}
-		content += "\n\n" + truncate("type to filter | enter add | esc back", max(1, m.width))
+		content += "\n\n" + truncate("country:Japan | tz:Paris | enter add | esc back", max(1, m.width))
 	default:
 		content = m.viewClock()
 	}

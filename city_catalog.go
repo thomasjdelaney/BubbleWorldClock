@@ -18,6 +18,17 @@ type cityRecord struct {
 	Population  int64  `json:"population"`
 }
 
+const (
+	cityNameField = iota
+	cityASCIINameField
+	cityRegionField
+	cityAdmin1CodeField
+	cityCountryField
+	cityCountryCodeField
+	cityTimezoneField
+	cityFilterFieldCount
+)
+
 func (c cityRecord) Title() string {
 	return c.Name
 }
@@ -28,7 +39,7 @@ func (c cityRecord) Description() string {
 }
 
 func (c cityRecord) FilterValue() string {
-	return strings.Join(nonEmpty([]string{
+	return strings.Join([]string{
 		c.Name,
 		c.ASCIIName,
 		c.Region,
@@ -36,23 +47,48 @@ func (c cityRecord) FilterValue() string {
 		c.Country,
 		c.CountryCode,
 		c.Timezone,
-	}), "\t")
+	}, "\t")
 }
 
 func cityFilter(term string, targets []string) []list.Rank {
 	cityNames := make([]string, len(targets))
 	otherFields := make([]string, len(targets))
+	countries := make([]string, len(targets))
+	timezones := make([]string, len(targets))
 	for i, target := range targets {
-		fields := strings.SplitN(target, "\t", 3)
-		cityNames[i] = strings.Join(fields[:min(2, len(fields))], " ")
-		if len(fields) > 2 {
-			otherFields[i] = fields[2]
+		fields := strings.SplitN(target, "\t", cityFilterFieldCount)
+		for len(fields) < cityFilterFieldCount {
+			fields = append(fields, "")
+		}
+		cityNames[i] = strings.Join(nonEmpty(fields[cityNameField:cityASCIINameField+1]), " ")
+		otherFields[i] = strings.Join(nonEmpty(fields[cityRegionField:cityFilterFieldCount]), " ")
+		countries[i] = strings.Join(nonEmpty(fields[cityCountryField:cityCountryCodeField+1]), " ")
+		timezones[i] = fields[cityTimezoneField]
+	}
+
+	if prefix, value, hasPrefix := strings.Cut(term, ":"); hasPrefix {
+		switch strings.ToLower(strings.TrimSpace(prefix)) {
+		case "country":
+			return filterCityField(strings.TrimSpace(value), countries)
+		case "tz":
+			return filterCityField(strings.TrimSpace(value), timezones)
 		}
 	}
 	if matches := list.DefaultFilter(term, cityNames); len(matches) > 0 {
 		return matches
 	}
 	return list.DefaultFilter(term, otherFields)
+}
+
+func filterCityField(term string, fields []string) []list.Rank {
+	if term == "" {
+		matches := make([]list.Rank, len(fields))
+		for index := range fields {
+			matches[index].Index = index
+		}
+		return matches
+	}
+	return list.DefaultFilter(term, fields)
 }
 
 func nonEmpty(values []string) []string {

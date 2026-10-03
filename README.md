@@ -74,7 +74,7 @@ Run `bubble-world-clock` (or `bubble-world-clock.exe` on Windows).
 - `bubble-world-clock version`: print the installed version.
 - `q` or `Ctrl+C`: quit; `?`: show help; `m`: manage cities.
 - In city management, `a` adds a city, `d` removes one, and `o` changes sort order. Use the arrow keys or `j`/`k` to move.
-- In the city picker, type to filter, `Enter` to add a city, and `Esc` to go back.
+- In the city picker, type a city name to search normally, or use `country:Japan` / `tz:Paris` to filter by country or timezone. Press `Enter` to add a city and `Esc` to go back.
 - If saving fails, press `s` to retry.
 
 Your city list is saved in the operating system's user config directory at `BubbleWorldClock/cities.json`. The catalog is derived from GeoNames `cities15000` under CC BY 4.0; see [data/README.md](data/README.md) for attribution.
