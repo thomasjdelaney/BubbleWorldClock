@@ -474,6 +474,26 @@ func TestVersionComparisonHandlesReleaseTags(t *testing.T) {
 	}
 }
 
+func TestCurrentVersionUsesInjectedBuildVersion(t *testing.T) {
+	originalVersion := appVersion
+	t.Cleanup(func() { appVersion = originalVersion })
+	appVersion = "v1.2.3"
+
+	if got := currentVersion(); got != "v1.2.3" {
+		t.Fatalf("currentVersion() = %q, want injected version", got)
+	}
+}
+
+func TestCurrentVersionFallsBackToDevelopmentVersion(t *testing.T) {
+	originalVersion := appVersion
+	t.Cleanup(func() { appVersion = originalVersion })
+	appVersion = "dev"
+
+	if got := currentVersion(); got != "dev" {
+		t.Fatalf("currentVersion() = %q, want dev", got)
+	}
+}
+
 func TestViewStaysWithinNarrowWidth(t *testing.T) {
 	m := testModel([]city{
 		{Name: "A Very Long City Name", Timezone: "Asia/Tokyo"},

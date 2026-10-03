@@ -71,6 +71,7 @@ Linux users can also install from the `.deb` or `.rpm` packages on the [releases
 Run `bubble-world-clock` (or `bubble-world-clock.exe` on Windows).
 
 - `bubble-world-clock update`: check GitHub for a newer release and install it in place when available.
+- `bubble-world-clock version`: print the installed version.
 - `q` or `Ctrl+C`: quit; `?`: show help; `m`: manage cities.
 - In city management, `a` adds a city, `d` removes one, and `o` changes sort order. Use the arrow keys or `j`/`k` to move.
 - In the city picker, type to filter, `Enter` to add a city, and `Esc` to go back.

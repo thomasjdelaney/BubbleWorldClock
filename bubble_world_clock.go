@@ -651,8 +651,11 @@ func main() {
 		switch os.Args[1] {
 		case "update":
 			os.Exit(runUpdate())
+		case "version":
+			fmt.Println(currentVersion())
+			return
 		case "--help", "-h", "help":
-			fmt.Println("Usage: bubble-world-clock [update]")
+			fmt.Println("Usage: bubble-world-clock [update|version]")
 			return
 		}
 	}
