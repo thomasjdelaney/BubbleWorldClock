@@ -154,11 +154,21 @@ func (k keyMap) ShortHelp() []key.Binding {
 	return []key.Binding{k.Quit, k.ToggleHelp}
 }
 
-func (k keyMap) FullHelp() [][]key.Binding {
-	return [][]key.Binding{
-		{k.Quit, k.ToggleHelp, k.Manage},
-		{k.AddCity, k.RemoveCity, k.Back},
-		{k.CursorUp, k.CursorDown, k.ChooseCity, k.RetrySave, k.Sort},
+type screenHelpKeyMap struct {
+	keyMap
+	screen screen
+}
+
+func (k screenHelpKeyMap) FullHelp() [][]key.Binding {
+	switch k.screen {
+	case manageScreen:
+		return [][]key.Binding{
+			{k.Quit, k.ToggleHelp, k.Back},
+			{k.AddCity, k.RemoveCity},
+			{k.CursorUp, k.CursorDown, k.RetrySave, k.Sort},
+		}
+	default:
+		return [][]key.Binding{{k.Quit, k.ToggleHelp, k.Manage}}
 	}
 }
 
@@ -485,7 +495,7 @@ func (m model) View() tea.View {
 	default:
 		content = m.viewClock()
 	}
-	if helpView := m.help.View(m.keys); helpView != "" && m.screen != pickerScreen {
+	if helpView := m.help.View(screenHelpKeyMap{keyMap: m.keys, screen: m.screen}); helpView != "" && m.screen != pickerScreen {
 		content += "\n\n" + helpView
 	}
 	view := tea.NewView(content)

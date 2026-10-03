@@ -459,6 +459,75 @@ func TestUpdateHandlesQuitHelpResizeAndTick(t *testing.T) {
 	}
 }
 
+func TestExpandedHelpMatchesActiveScreen(t *testing.T) {
+	clockModel := testModel(nil)
+	clockModel.width = 100
+	clockModel.help.ShowAll = true
+
+	clockView := clockModel.View().Content
+	for _, want := range []string{"quit", "more help", "manage cities"} {
+		if !strings.Contains(clockView, want) {
+			t.Errorf("clock help is missing %q", want)
+		}
+	}
+	for _, unwanted := range []string{"add city", "remove city", "move up", "retry save", "cycle sort order", "choose city"} {
+		if strings.Contains(clockView, unwanted) {
+			t.Errorf("clock help unexpectedly contains %q", unwanted)
+		}
+	}
+
+	updated, _ := clockModel.Update(tea.KeyPressMsg(tea.Key{Text: "m", Code: 'm'}))
+	manageModel := updated.(model)
+	if !manageModel.help.ShowAll {
+		t.Fatal("expanded help did not remain open when entering city management")
+	}
+	manageView := manageModel.View().Content
+	for _, want := range []string{"quit", "more help", "back", "add city", "remove city", "move up", "retry save", "cycle sort order"} {
+		if !strings.Contains(manageView, want) {
+			t.Errorf("management help is missing %q", want)
+		}
+	}
+	for _, unwanted := range []string{"manage cities", "choose city"} {
+		if strings.Contains(manageView, unwanted) {
+			t.Errorf("management help unexpectedly contains %q", unwanted)
+		}
+	}
+
+	updated, _ = manageModel.Update(tea.KeyPressMsg(tea.Key{Code: tea.KeyEsc}))
+	clockModel = updated.(model)
+	if !strings.Contains(clockModel.View().Content, "manage cities") {
+		t.Fatal("clock help did not return after leaving city management")
+	}
+}
+
+func TestPickerKeepsFilteringInsteadOfShowingGlobalHelp(t *testing.T) {
+	manageModel := testModel(nil)
+	manageModel.width = 80
+	manageModel.height = 20
+	manageModel.help.ShowAll = true
+	manageModel.screen = manageScreen
+	manageModel.catalog = []cityRecord{{Name: "Example City", ASCIIName: "Example City", Timezone: "UTC"}}
+
+	updated, _ := manageModel.openPicker()
+	pickerModel := updated.(model)
+	updated, _ = pickerModel.Update(tea.KeyPressMsg(tea.Key{Text: "?", Code: '?'}))
+	pickerModel = updated.(model)
+
+	if pickerModel.picker.FilterValue() != "?" {
+		t.Fatalf("picker filter=%q, want '?'", pickerModel.picker.FilterValue())
+	}
+	if !pickerModel.help.ShowAll {
+		t.Fatal("opening the picker changed the expanded-help state")
+	}
+	pickerView := pickerModel.View().Content
+	if !strings.Contains(pickerView, "type to filter | enter add | esc back") {
+		t.Fatal("picker inline instructions were not rendered")
+	}
+	if strings.Contains(pickerView, "manage cities") || strings.Contains(pickerView, "more help") {
+		t.Fatal("global help was rendered over the picker")
+	}
+}
+
 func TestVersionComparisonHandlesReleaseTags(t *testing.T) {
 	if compareVersions("v1.2.0", "v1.2.1") != -1 {
 		t.Fatal("older release unexpectedly reported as newer")
