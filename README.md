@@ -1,10 +1,12 @@
 # Bubble World Clock
 
-A terminal world clock built with [Bubble Tea](https://github.com/charmbracelet/bubbletea). Manage a list of cities and see their local dates, times, and UTC offsets. The city picker uses a bundled offline catalog.
+A terminal world clock built with [Bubble Tea](https://github.com/charmbracelet/bubbletea). Track local dates, times, and UTC offsets for cities from a bundled offline catalog.
+
+![Bubble World Clock showing sorted city times and the UTC reference row](images/bubble-world-clock-table-view.png)
 
 ## Install
 
-Installers download the latest stable release, verify its SHA-256 checksum, and install for the current user. They do not change saved city settings. Download the installer to a temporary file and run it locally; do not pipe a remote script directly into a shell.
+Choose an installer below. It downloads the latest stable release, verifies its SHA-256 checksum, and installs the program for the current user without changing saved clock settings. Each example downloads the installer to a temporary file and runs it locally; do not pipe a remote script directly into a shell.
 
 ### Linux and macOS
 
@@ -72,12 +74,12 @@ Run `bubble-world-clock` (or `bubble-world-clock.exe` on Windows).
 
 - `bubble-world-clock update`: check GitHub for a newer release and install it in place when available.
 - `bubble-world-clock version`: print the installed version.
-- `q` or `Ctrl+C`: quit; `?`: show help; `m`: manage cities.
-- In city management, `a` adds a city, `d` removes one, `o` changes sort order, and `u` toggles the saved UTC reference row. Use the arrow keys or `j`/`k` to move.
-- In the city picker, type a city name to search normally, or use `country:Japan` / `tz:Paris` to filter by country or timezone. Press `Enter` to add a city and `Esc` to go back.
+- On the clock screen, `m` opens city management, `?` shows help, and `q` or `Ctrl+C` quits.
+- In city management, `a` adds a city, `d` removes the selected city, `o` cycles the sort order, and `u` toggles the saved UTC reference row. UTC is off by default and follows the active sort order when enabled. Use the arrow keys or `j`/`k` to move the selection.
+- In the city picker, type a city name to search, or use `country:Japan` or `tz:Paris` to filter by country or timezone. Press `Enter` to add a city and `Esc` to return to management.
 - If saving fails, press `s` to retry.
 
-Your city list is saved in the operating system's user config directory at `BubbleWorldClock/cities.json`. The catalog is derived from GeoNames `cities15000` under CC BY 4.0; see [data/README.md](data/README.md) for attribution.
+Your city list, sort order, and UTC setting are saved in the operating system's user config directory under `BubbleWorldClock/cities.json`. The offline city catalog is derived from GeoNames `cities15000` under CC BY 4.0; see [data/README.md](data/README.md) for attribution.
 
 ## Develop
 
