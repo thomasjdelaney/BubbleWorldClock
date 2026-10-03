@@ -99,6 +99,7 @@ type keyMap struct {
 	ChooseCity key.Binding
 	RetrySave  key.Binding
 	Sort       key.Binding
+	ToggleUTC  key.Binding
 }
 
 func newKeyMap() keyMap {
@@ -147,6 +148,10 @@ func newKeyMap() keyMap {
 			key.WithKeys("o"),
 			key.WithHelp("o", "cycle sort order"),
 		),
+		ToggleUTC: key.NewBinding(
+			key.WithKeys("u"),
+			key.WithHelp("u", "toggle UTC reference"),
+		),
 	}
 }
 
@@ -164,7 +169,7 @@ func (k screenHelpKeyMap) FullHelp() [][]key.Binding {
 	case manageScreen:
 		return [][]key.Binding{
 			{k.Quit, k.ToggleHelp, k.Back},
-			{k.AddCity, k.RemoveCity},
+			{k.AddCity, k.RemoveCity, k.ToggleUTC},
 			{k.CursorUp, k.CursorDown, k.RetrySave, k.Sort},
 		}
 	default:
@@ -180,6 +185,7 @@ type model struct {
 	selected   int
 	configPath string
 	sortMode   sortMode
+	showUTC    bool
 	status     string
 	saving     bool
 	unsaved    bool
@@ -292,6 +298,13 @@ func (m model) updateKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 			m.sortMode = m.sortMode.next()
 			m.sortCitiesPreservingSelection()
 			return m, m.startSave()
+		case key.Matches(msg, m.keys.ToggleUTC):
+			if m.saving {
+				m.status = "Wait for the current save to finish"
+				return m, nil
+			}
+			m.showUTC = !m.showUTC
+			return m, m.startSave()
 		}
 		return m, nil
 
@@ -400,7 +413,7 @@ func (m *model) startSave() tea.Cmd {
 	m.saving = true
 	m.unsaved = true
 	m.status = "Saving changes..."
-	return saveCitiesCmd(m.configPath, m.cities, m.sortMode)
+	return saveCitiesCmd(m.configPath, m.cities, m.sortMode, m.showUTC)
 }
 
 func cityIdentity(value city) string {
@@ -419,39 +432,7 @@ func (m *model) sortCitiesPreservingSelection() {
 		selectedIdentity = cityIdentity(m.cities[m.selected])
 	}
 	sort.SliceStable(m.cities, func(first, second int) bool {
-		left, right := m.cities[first], m.cities[second]
-		leftLocation, leftErr := time.LoadLocation(left.Timezone)
-		rightLocation, rightErr := time.LoadLocation(right.Timezone)
-		leftOffset, rightOffset := 0, 0
-		if leftErr == nil {
-			_, leftOffset = m.now.In(leftLocation).Zone()
-		}
-		if rightErr == nil {
-			_, rightOffset = m.now.In(rightLocation).Zone()
-		}
-		if m.sortMode == sortOffsetAscending || m.sortMode == sortOffsetDescending {
-			if leftErr != rightErr {
-				return leftErr == nil
-			}
-			if leftOffset != rightOffset {
-				if m.sortMode == sortOffsetDescending {
-					return leftOffset > rightOffset
-				}
-				return leftOffset < rightOffset
-			}
-		}
-		leftName := strings.ToLower(left.Name)
-		rightName := strings.ToLower(right.Name)
-		if leftName != rightName {
-			if m.sortMode == sortNameDescending {
-				return leftName > rightName
-			}
-			return leftName < rightName
-		}
-		if left.Timezone != right.Timezone {
-			return left.Timezone < right.Timezone
-		}
-		return left.GeoNameID < right.GeoNameID
+		return cityComesBefore(m.cities[first], m.cities[second], m.sortMode, m.now)
 	})
 	if selectedIdentity == "" {
 		m.selected = min(m.selected, max(0, len(m.cities)-1))
@@ -464,6 +445,44 @@ func (m *model) sortCitiesPreservingSelection() {
 		}
 	}
 	m.selected = min(m.selected, max(0, len(m.cities)-1))
+}
+
+func cityComesBefore(left, right city, mode sortMode, now time.Time) bool {
+	if !mode.valid() {
+		mode = sortNameAscending
+	}
+	leftLocation, leftErr := time.LoadLocation(left.Timezone)
+	rightLocation, rightErr := time.LoadLocation(right.Timezone)
+	leftOffset, rightOffset := 0, 0
+	if leftErr == nil {
+		_, leftOffset = now.In(leftLocation).Zone()
+	}
+	if rightErr == nil {
+		_, rightOffset = now.In(rightLocation).Zone()
+	}
+	if mode == sortOffsetAscending || mode == sortOffsetDescending {
+		if leftErr != rightErr {
+			return leftErr == nil
+		}
+		if leftOffset != rightOffset {
+			if mode == sortOffsetDescending {
+				return leftOffset > rightOffset
+			}
+			return leftOffset < rightOffset
+		}
+	}
+	leftName := strings.ToLower(left.Name)
+	rightName := strings.ToLower(right.Name)
+	if leftName != rightName {
+		if mode == sortNameDescending {
+			return leftName > rightName
+		}
+		return leftName < rightName
+	}
+	if left.Timezone != right.Timezone {
+		return left.Timezone < right.Timezone
+	}
+	return left.GeoNameID < right.GeoNameID
 }
 
 func rowBackgroundStyle(index int) lipgloss.Style {
@@ -542,6 +561,7 @@ func (m model) viewClock() string {
 	titleStyle := lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("86"))
 	headerStyle := lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("229"))
 	cityStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("117"))
+	utcStyle := lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("214"))
 	timeStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("252"))
 	mutedStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("245"))
 	borderStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("238"))
@@ -558,17 +578,48 @@ func (m model) viewClock() string {
 	if len(m.cities) == 0 {
 		lines = append(lines, mutedStyle.Render("No cities yet. Press m to manage cities."))
 	}
+	utcIndex := len(m.cities)
+	if m.showUTC {
+		utc := city{Name: "UTC", Timezone: "UTC"}
+		for index, city := range m.cities {
+			if cityComesBefore(utc, city, m.sortMode, m.now) {
+				utcIndex = index
+				break
+			}
+		}
+	}
+	appendUTCRow := func(rowIndex int) {
+		utcTime := m.now.UTC()
+		if compact {
+			value := utcTime.Format("15:04")
+			labelWidth := max(1, contentWidth-lipgloss.Width(value)-1)
+			row := withRowBackground(utcStyle, rowIndex).Render(truncate("UTC", labelWidth)) + " " +
+				withRowBackground(timeStyle, rowIndex).Render(value)
+			lines = append(lines, row)
+			return
+		}
+		row := withRowBackground(utcStyle, rowIndex).Render(fmt.Sprintf("%-*s", nameWidth, "UTC")) + "  " +
+			withRowBackground(timeStyle, rowIndex).Render(fmt.Sprintf("%-*s  %-*s  %-*s  %-*s", dayWidth, utcTime.Format(dayFormat), dateWidth, utcTime.Format(dateFormat), timeWidth, utcTime.Format(timeFormat), offsetWidth, utcTime.Format(offsetFormat)))
+		lines = append(lines, row)
+	}
 	for i, city := range m.cities {
+		if m.showUTC && i == utcIndex {
+			appendUTCRow(i)
+		}
+		rowIndex := i
+		if m.showUTC && i >= utcIndex {
+			rowIndex++
+		}
 		label := m.cityLabel(i)
 		location, err := time.LoadLocation(city.Timezone)
 		if err != nil {
 			if compact {
-				row := withRowBackground(mutedStyle, i).Render(truncate(label+" invalid time zone", contentWidth))
+				row := withRowBackground(mutedStyle, rowIndex).Render(truncate(label+" invalid time zone", contentWidth))
 				lines = append(lines, row)
 				continue
 			}
 			name := truncate(label, nameWidth)
-			row := withRowBackground(cityStyle, i).Render(fmt.Sprintf("%-*s  ", nameWidth, name)) + withRowBackground(mutedStyle, i).Render("invalid time zone")
+			row := withRowBackground(cityStyle, rowIndex).Render(fmt.Sprintf("%-*s  ", nameWidth, name)) + withRowBackground(mutedStyle, rowIndex).Render("invalid time zone")
 			lines = append(lines, row)
 			continue
 		}
@@ -576,14 +627,17 @@ func (m model) viewClock() string {
 		if compact {
 			value := m.now.In(location).Format("15:04")
 			row := truncate(label, contentWidth-lipgloss.Width(value)-1) + " " + value
-			lines = append(lines, withRowBackground(timeStyle, i).Render(truncate(row, contentWidth)))
+			lines = append(lines, withRowBackground(timeStyle, rowIndex).Render(truncate(row, contentWidth)))
 			continue
 		}
 		name := truncate(label, nameWidth)
 		localTime := m.now.In(location)
-		row := withRowBackground(cityStyle, i).Render(fmt.Sprintf("%-*s", nameWidth, name)) + "  " +
-			withRowBackground(timeStyle, i).Render(fmt.Sprintf("%-*s  %-*s  %-*s  %-*s", dayWidth, localTime.Format(dayFormat), dateWidth, localTime.Format(dateFormat), timeWidth, localTime.Format(timeFormat), offsetWidth, localTime.Format(offsetFormat)))
+		row := withRowBackground(cityStyle, rowIndex).Render(fmt.Sprintf("%-*s", nameWidth, name)) + "  " +
+			withRowBackground(timeStyle, rowIndex).Render(fmt.Sprintf("%-*s  %-*s  %-*s  %-*s", dayWidth, localTime.Format(dayFormat), dateWidth, localTime.Format(dateFormat), timeWidth, localTime.Format(timeFormat), offsetWidth, localTime.Format(offsetFormat)))
 		lines = append(lines, row)
+	}
+	if m.showUTC && utcIndex == len(m.cities) {
+		appendUTCRow(utcIndex)
 	}
 	lines = append(lines, mutedStyle.Render(truncate("m manage cities", contentWidth)))
 
@@ -621,7 +675,12 @@ func (m model) viewManage() string {
 		lines = append(lines, "", mutedStyle.Render(truncate(m.status, contentWidth)))
 	}
 	lines = append(lines, "", mutedStyle.Render(truncate("sort: "+m.sortMode.label(), contentWidth)))
-	lines = append(lines, mutedStyle.Render(truncate("up/down select | o cycle sort order | a add | d remove | esc back", contentWidth)))
+	utcState := "off"
+	if m.showUTC {
+		utcState = "on"
+	}
+	lines = append(lines, mutedStyle.Render(truncate("UTC reference: "+utcState, contentWidth)))
+	lines = append(lines, mutedStyle.Render(truncate("up/down select | o sort | u toggle UTC reference | a add | d remove | esc back", contentWidth)))
 	return strings.Join(lines, "\n")
 }
 
@@ -706,6 +765,7 @@ func main() {
 		catalog:    catalog,
 		configPath: configPath,
 		sortMode:   watchlist.Sort,
+		showUTC:    watchlist.ShowUTC,
 		now:        time.Now(),
 		help:       help.New(),
 		keys:       newKeyMap(),

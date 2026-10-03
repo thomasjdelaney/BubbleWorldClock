@@ -167,6 +167,50 @@ func TestSortCitiesByNameAndOffsetPreservesSelection(t *testing.T) {
 	}
 }
 
+func TestUTCReferenceFollowsActiveSortOrder(t *testing.T) {
+	cities := []city{
+		{Name: "Tokyo", Timezone: "Asia/Tokyo"},
+		{Name: "London", Timezone: "Europe/London"},
+		{Name: "Zebra", Timezone: "America/New_York"},
+		{Name: "Alpha", Timezone: "America/Los_Angeles"},
+	}
+	tests := []struct {
+		name string
+		mode sortMode
+		want []string
+	}{
+		{name: "name ascending", mode: sortNameAscending, want: []string{"Alpha", "London", "Tokyo", "UTC", "Zebra"}},
+		{name: "name descending", mode: sortNameDescending, want: []string{"Zebra", "UTC", "Tokyo", "London", "Alpha"}},
+		{name: "offset ascending", mode: sortOffsetAscending, want: []string{"Alpha", "Zebra", "London", "UTC", "Tokyo"}},
+		{name: "offset descending", mode: sortOffsetDescending, want: []string{"Tokyo", "London", "UTC", "Zebra", "Alpha"}},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			m := testModel(append([]city(nil), cities...))
+			m.width = 100
+			m.showUTC = true
+			m.sortMode = test.mode
+			m.sortCitiesPreservingSelection()
+
+			view := m.View().Content
+			lastPosition := -1
+			for _, label := range test.want {
+				position := strings.Index(view, label)
+				if label == "UTC" {
+					position = strings.LastIndex(view, label)
+				}
+				if position <= lastPosition {
+					t.Fatalf("clock row %q appears out of order in %q", label, view)
+				}
+				lastPosition = position
+			}
+			if len(m.cities) != len(cities) {
+				t.Fatalf("UTC reference changed managed city count to %d", len(m.cities))
+			}
+		})
+	}
+}
+
 func TestSortPlacesInvalidTimezoneLast(t *testing.T) {
 	m := testModel([]city{
 		{Name: "Broken", Timezone: "Not/AZone"},
@@ -183,8 +227,9 @@ func TestWatchlistRoundTripsSortModeAndLoadsLegacyArrays(t *testing.T) {
 	directory := t.TempDir()
 	configPath := filepath.Join(directory, "config", "cities.json")
 	want := watchlistConfig{
-		Cities: []city{{Name: "Tokyo", Timezone: "Asia/Tokyo"}},
-		Sort:   sortOffsetDescending,
+		Cities:  []city{{Name: "Tokyo", Timezone: "Asia/Tokyo"}},
+		Sort:    sortOffsetDescending,
+		ShowUTC: true,
 	}
 	if err := saveWatchlist(configPath, want); err != nil {
 		t.Fatal(err)
@@ -193,7 +238,7 @@ func TestWatchlistRoundTripsSortModeAndLoadsLegacyArrays(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got.Sort != want.Sort || len(got.Cities) != 1 || got.Cities[0] != want.Cities[0] {
+	if got.Sort != want.Sort || got.ShowUTC != want.ShowUTC || len(got.Cities) != 1 || got.Cities[0] != want.Cities[0] {
 		t.Fatalf("watchlist=%#v, want %#v", got, want)
 	}
 
@@ -209,8 +254,43 @@ func TestWatchlistRoundTripsSortModeAndLoadsLegacyArrays(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if legacy.Sort != sortNameAscending || len(legacy.Cities) != 1 {
+	if legacy.Sort != sortNameAscending || legacy.ShowUTC || len(legacy.Cities) != 1 {
 		t.Fatalf("legacy config=%#v, want name ascending default", legacy)
+	}
+	if err := os.WriteFile(configPath, []byte(`{"cities":[],"sort":"name_asc"}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	omitted, err := readWatchlist(configPath)
+	if err != nil || omitted.ShowUTC {
+		t.Fatalf("watchlist without show_utc=%t err=%v, want default false", omitted.ShowUTC, err)
+	}
+}
+
+func TestToggleUTCReferencePersistsAndWaitsForCurrentSave(t *testing.T) {
+	m := testModel([]city{{Name: "Tokyo", Timezone: "Asia/Tokyo"}})
+	m.screen = manageScreen
+	m.configPath = filepath.Join(t.TempDir(), "cities.json")
+	toggle := tea.KeyPressMsg(tea.Key{Text: "u", Code: 'u'})
+
+	updated, cmd := m.Update(toggle)
+	enabled := updated.(model)
+	if !enabled.showUTC || cmd == nil {
+		t.Fatalf("UTC toggle: showUTC=%t cmd=%v", enabled.showUTC, cmd != nil)
+	}
+	updated, _ = enabled.Update(cmd())
+	if saved := updated.(model); saved.unsaved {
+		t.Fatal("successful UTC preference save remained unsaved")
+	}
+	config, err := loadWatchlistConfig(m.configPath, filepath.Join(t.TempDir(), "legacy.json"), nil)
+	if err != nil || !config.ShowUTC {
+		t.Fatalf("saved UTC preference=%t err=%v, want true", config.ShowUTC, err)
+	}
+
+	enabled.saving = true
+	updated, cmd = enabled.Update(toggle)
+	blocked := updated.(model)
+	if !blocked.showUTC || cmd != nil || blocked.status != "Wait for the current save to finish" {
+		t.Fatalf("toggle during save changed preference or scheduled save: showUTC=%t cmd=%v status=%q", blocked.showUTC, cmd != nil, blocked.status)
 	}
 }
 
@@ -218,6 +298,7 @@ func TestPickerFiltersAndAddsCatalogCity(t *testing.T) {
 	m := testModel([]city{{Name: "London", Timezone: "Europe/London"}})
 	m.height = 24
 	m.configPath = filepath.Join(t.TempDir(), "cities.json")
+	m.showUTC = true
 	m.catalog = []cityRecord{
 		{GeoNameID: 1, Name: "Munich", ASCIIName: "Muenchen", Country: "Germany", Timezone: "Europe/Berlin"},
 		{GeoNameID: 2, Name: "Tokyo", ASCIIName: "Tokyo", Country: "Japan", Timezone: "Asia/Tokyo"},
@@ -250,6 +331,10 @@ func TestPickerFiltersAndAddsCatalogCity(t *testing.T) {
 	updated, _ = added.Update(cmd())
 	if updated.(model).unsaved {
 		t.Fatal("successful save left city changes marked unsaved")
+	}
+	savedConfig, err := loadWatchlistConfig(m.configPath, filepath.Join(t.TempDir(), "legacy.json"), nil)
+	if err != nil || !savedConfig.ShowUTC {
+		t.Fatalf("city save lost UTC preference: showUTC=%t err=%v", savedConfig.ShowUTC, err)
 	}
 }
 
@@ -445,6 +530,33 @@ func TestViewRendersDaylightSavingOffset(t *testing.T) {
 	}
 }
 
+func TestViewRendersUTCReferenceInBothLayouts(t *testing.T) {
+	m := testModel([]city{{Name: "Tokyo", Timezone: "Asia/Tokyo"}})
+	m.showUTC = true
+	m.now = time.Date(2026, time.January, 3, 0, 4, 5, 0, time.UTC)
+
+	m.width = 80
+	fullView := m.View().Content
+	for _, want := range []string{"UTC", "Sat", "03 Jan 2026", "00:04:05", "+00:00"} {
+		if !strings.Contains(fullView, want) {
+			t.Errorf("full UTC view is missing %q", want)
+		}
+	}
+	if strings.Index(fullView, "Tokyo") > strings.LastIndex(fullView, "UTC") {
+		t.Fatal("UTC reference was not rendered after the city rows")
+	}
+
+	m.width = 45
+	compactView := m.View().Content
+	if strings.Contains(compactView, "UTC OFFSET") || !strings.Contains(compactView, "UTC") || !strings.Contains(compactView, "00:04") {
+		t.Fatalf("compact view does not render the UTC reference correctly: %q", compactView)
+	}
+	for _, line := range strings.Split(compactView, "\n") {
+		if width := lipgloss.Width(line); width > m.width {
+			t.Fatalf("compact UTC row exceeds terminal width: %d > %d: %q", width, m.width, line)
+		}
+	}
+}
 func TestViewAlternatesRowBackgrounds(t *testing.T) {
 	m := testModel([]city{
 		{Name: "London", Timezone: "Europe/London"},
@@ -517,7 +629,12 @@ func TestExpandedHelpMatchesActiveScreen(t *testing.T) {
 		t.Fatal("expanded help did not remain open when entering city management")
 	}
 	manageView := manageModel.View().Content
-	for _, want := range []string{"quit", "more help", "back", "add city", "remove city", "move up", "retry save", "cycle sort order"} {
+	for _, want := range []string{"UTC reference: off", "u toggle UTC reference"} {
+		if !strings.Contains(manageView, want) {
+			t.Errorf("management view is missing %q", want)
+		}
+	}
+	for _, want := range []string{"quit", "more help", "back", "add city", "remove city", "toggle UTC reference", "move up", "retry save", "cycle sort order"} {
 		if !strings.Contains(manageView, want) {
 			t.Errorf("management help is missing %q", want)
 		}

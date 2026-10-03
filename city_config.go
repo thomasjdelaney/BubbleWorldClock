@@ -11,8 +11,9 @@ import (
 )
 
 type watchlistConfig struct {
-	Cities []city   `json:"cities"`
-	Sort   sortMode `json:"sort"`
+	Cities  []city   `json:"cities"`
+	Sort    sortMode `json:"sort"`
+	ShowUTC bool     `json:"show_utc,omitempty"`
 }
 
 func loadWatchlistConfig(configPath, legacyPath string, defaults []city) (watchlistConfig, error) {
@@ -117,9 +118,9 @@ type citySaveResultMsg struct {
 	err error
 }
 
-func saveCitiesCmd(filename string, cities []city, sortMode sortMode) tea.Cmd {
+func saveCitiesCmd(filename string, cities []city, sortMode sortMode, showUTC bool) tea.Cmd {
 	snapshot := append([]city(nil), cities...)
 	return func() tea.Msg {
-		return citySaveResultMsg{err: saveWatchlist(filename, watchlistConfig{Cities: snapshot, Sort: sortMode})}
+		return citySaveResultMsg{err: saveWatchlist(filename, watchlistConfig{Cities: snapshot, Sort: sortMode, ShowUTC: showUTC})}
 	}
 }

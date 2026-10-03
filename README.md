@@ -73,7 +73,7 @@ Run `bubble-world-clock` (or `bubble-world-clock.exe` on Windows).
 - `bubble-world-clock update`: check GitHub for a newer release and install it in place when available.
 - `bubble-world-clock version`: print the installed version.
 - `q` or `Ctrl+C`: quit; `?`: show help; `m`: manage cities.
-- In city management, `a` adds a city, `d` removes one, and `o` changes sort order. Use the arrow keys or `j`/`k` to move.
+- In city management, `a` adds a city, `d` removes one, `o` changes sort order, and `u` toggles the saved UTC reference row. Use the arrow keys or `j`/`k` to move.
 - In the city picker, type a city name to search normally, or use `country:Japan` / `tz:Paris` to filter by country or timezone. Press `Enter` to add a city and `Esc` to go back.
 - If saving fails, press `s` to retry.
 
