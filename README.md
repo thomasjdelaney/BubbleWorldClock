@@ -4,42 +4,62 @@ A terminal world clock built with [Bubble Tea](https://github.com/charmbracelet/
 
 ## Install
 
-Installers download the latest stable release, verify its SHA-256 checksum, and install for the current user. They do not change saved city settings. Download the installer, inspect it, and run it locally; do not pipe a remote script directly into a shell.
+Installers download the latest stable release, verify its SHA-256 checksum, and install for the current user. They do not change saved city settings. Download the installer to a temporary file and run it locally; do not pipe a remote script directly into a shell.
 
 ### Linux and macOS
 
 Requires `curl`, `tar`, and `sha256sum` or `shasum`.
 
 ```sh
-curl -fL https://raw.githubusercontent.com/thomasjdelaney/BubbleWorldClock/master/scripts/install.sh -o install.sh
-less install.sh
-sh install.sh
+(
+	set -e
+	installer=$(mktemp "${TMPDIR:-/tmp}/bubbleworldclock-install.XXXXXX")
+	trap 'rm -f "$installer"' EXIT HUP INT TERM
+	curl -fL https://raw.githubusercontent.com/thomasjdelaney/BubbleWorldClock/master/scripts/install.sh -o "$installer"
+	sh "$installer"
+)
 ```
 
 To choose a release version or installation directory:
 
 ```sh
-sh install.sh --version v1.2.3 --install-dir "$HOME/bin"
+(
+	set -e
+	installer=$(mktemp "${TMPDIR:-/tmp}/bubbleworldclock-install.XXXXXX")
+	trap 'rm -f "$installer"' EXIT HUP INT TERM
+	curl -fL https://raw.githubusercontent.com/thomasjdelaney/BubbleWorldClock/master/scripts/install.sh -o "$installer"
+	sh "$installer" --version v1.2.3 --install-dir "$HOME/bin"
+)
 ```
 
 The default install directory is `~/.local/bin`. The installer adds it to `~/.profile` on Linux or `~/.zprofile` on macOS. Open a new terminal after installation. If you choose a custom directory, add it to PATH yourself.
 
 ### Windows
 
-In PowerShell, download and inspect the script before running it:
+In PowerShell, download the script to a temporary file and run it:
 
 ```powershell
-Invoke-WebRequest https://raw.githubusercontent.com/thomasjdelaney/BubbleWorldClock/master/scripts/install.ps1 -OutFile install.ps1
-Get-Content .\install.ps1
-.\install.ps1
+$installer = Join-Path ([IO.Path]::GetTempPath()) "bubbleworldclock-install-$([guid]::NewGuid()).ps1"
+try {
+	Invoke-WebRequest -Uri https://raw.githubusercontent.com/thomasjdelaney/BubbleWorldClock/master/scripts/install.ps1 -OutFile $installer -ErrorAction Stop
+	& $installer
+} finally {
+	Remove-Item -LiteralPath $installer -Force -ErrorAction SilentlyContinue
+}
 ```
 
-If PowerShell blocks script execution, after inspecting the file allow scripts for this session only with `Set-ExecutionPolicy -Scope Process -ExecutionPolicy Bypass`, then run `.\install.ps1` again.
+If PowerShell blocks script execution, allow scripts for this session only with `Set-ExecutionPolicy -Scope Process -ExecutionPolicy Bypass`, then rerun the download-and-run block.
 
 To choose a release version or installation directory:
 
 ```powershell
-.\install.ps1 -Version v1.2.3 -InstallDir "$env:LOCALAPPDATA\Programs\BubbleWorldClock"
+$installer = Join-Path ([IO.Path]::GetTempPath()) "bubbleworldclock-install-$([guid]::NewGuid()).ps1"
+try {
+	Invoke-WebRequest -Uri https://raw.githubusercontent.com/thomasjdelaney/BubbleWorldClock/master/scripts/install.ps1 -OutFile $installer -ErrorAction Stop
+	& $installer -Version v1.2.3 -InstallDir "$env:LOCALAPPDATA\Programs\BubbleWorldClock"
+} finally {
+	Remove-Item -LiteralPath $installer -Force -ErrorAction SilentlyContinue
+}
 ```
 
 The default directory is `%LOCALAPPDATA%\Programs\BubbleWorldClock`; the installer adds it to your user PATH. Open a new terminal after installation. Windows ARM64 is not currently supported.
