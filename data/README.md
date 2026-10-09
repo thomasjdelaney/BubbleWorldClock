@@ -1,7 +1,8 @@
 # City Catalog
 
 `city_catalog.json` is generated from the GeoNames `cities15000` extract. The
-snapshot was retrieved on 2026-09-27 from the official GeoNames dump server.
+city catalog snapshot was retrieved on 2026-09-27 from the official GeoNames
+dump server. Coordinates were refreshed from that source on 2026-10-08.
 
 Source files:
 
@@ -11,8 +12,9 @@ Source files:
 
 The converter keeps cities with a country name and an IANA timezone recognized
 by Go's timezone database. It includes GeoNames IDs, display and ASCII names,
-country and first-level region labels, timezone IDs, and population values.
-Entries are sorted by country, city name, then GeoNames ID.
+geographic coordinates when present, country and first-level region labels,
+timezone IDs, and population values. Entries are sorted by country, city name,
+then GeoNames ID.
 
 GeoNames data is provided under CC BY 4.0. Attribution: "City and country data
 from GeoNames (https://www.geonames.org/), licensed under CC BY 4.0

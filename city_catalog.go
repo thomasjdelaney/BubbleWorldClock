@@ -7,15 +7,18 @@ import (
 )
 
 type cityRecord struct {
-	GeoNameID   int64  `json:"geoname_id"`
-	Name        string `json:"name"`
-	ASCIIName   string `json:"ascii_name"`
-	CountryCode string `json:"country_code"`
-	Country     string `json:"country"`
-	Admin1Code  string `json:"admin1_code"`
-	Region      string `json:"region"`
-	Timezone    string `json:"timezone"`
-	Population  int64  `json:"population"`
+	GeoNameID        int64   `json:"geoname_id"`
+	Name             string  `json:"name"`
+	ASCIIName        string  `json:"ascii_name"`
+	CountryCode      string  `json:"country_code"`
+	Country          string  `json:"country"`
+	Admin1Code       string  `json:"admin1_code"`
+	Region           string  `json:"region"`
+	Timezone         string  `json:"timezone"`
+	Latitude         float64 `json:"latitude"`
+	Longitude        float64 `json:"longitude"`
+	CoordinatesKnown bool    `json:"coordinates_known,omitempty"`
+	Population       int64   `json:"population"`
 }
 
 const (

@@ -528,6 +528,7 @@ func (m model) viewClock() string {
 		dateFormat   = "02 Jan 2006"
 		timeFormat   = "15:04:05"
 		offsetFormat = "-07:00"
+		maxBarWidth  = 48
 	)
 
 	width := m.width
@@ -539,28 +540,33 @@ func (m model) viewClock() string {
 		contentWidth = 1
 	}
 	offsetWidth := lipgloss.Width("UTC OFFSET")
-	compact := contentWidth < 44
+	daylightHeader := "DAYLIGHT"
+	daylightWidth := lipgloss.Width(daylightHeader)
 	dayWidth := lipgloss.Width(dayFormat)
 	dateWidth := lipgloss.Width(dateFormat)
 	timeWidth := lipgloss.Width(timeFormat)
 
-	nameWidth := 4
+	desiredNameWidth := 4
 	for i := range m.cities {
-		if cityWidth := lipgloss.Width(m.cityLabel(i)); cityWidth > nameWidth {
-			nameWidth = cityWidth
+		if cityWidth := lipgloss.Width(m.cityLabel(i)); cityWidth > desiredNameWidth {
+			desiredNameWidth = cityWidth
 		}
 	}
-	maxNameWidth := contentWidth - dayWidth - dateWidth - timeWidth - offsetWidth - 8
-	if maxNameWidth < 1 {
-		maxNameWidth = 1
+	if desiredNameWidth > 13 {
+		desiredNameWidth = 13
 	}
-	if nameWidth > maxNameWidth {
-		nameWidth = maxNameWidth
-	}
+	fixedColumnsWidth := dayWidth + dateWidth + timeWidth + offsetWidth + 10
+	compact := contentWidth < fixedColumnsWidth+daylightWidth+4
 
 	titleStyle := lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("86"))
 	headerStyle := lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("229"))
 	cityStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("117"))
+	barStyles := map[lightLevel]lipgloss.Style{
+		lightNight:    lipgloss.NewStyle().Foreground(lipgloss.Color("245")),
+		lightTwilight: lipgloss.NewStyle().Foreground(lipgloss.Color("214")),
+		lightDay:      lipgloss.NewStyle().Foreground(lipgloss.Color("229")),
+	}
+	markerStyle := lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("86"))
 	utcStyle := lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("214"))
 	timeStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("252"))
 	mutedStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("245"))
@@ -568,12 +574,18 @@ func (m model) viewClock() string {
 
 	title := truncate("Bubble World Clock", contentWidth)
 	lines := []string{titleStyle.Render(title)}
+	utcDayStart := time.Date(m.now.UTC().Year(), m.now.UTC().Month(), m.now.UTC().Day(), 0, 0, 0, 0, time.UTC)
+	utcDayEnd := utcDayStart.Add(24 * time.Hour)
+	barWidth, nameWidth, compactTimeWidth := daylightLayoutWidths(contentWidth, compact, desiredNameWidth, fixedColumnsWidth, daylightWidth, maxBarWidth)
+
 	if !compact {
 		lines = append(lines,
 			mutedStyle.Render(strings.Repeat("─", contentWidth)),
-			headerStyle.Render(fmt.Sprintf("%-*s  %-*s  %-*s  %-*s  %-*s", nameWidth, "CITY", dayWidth, "DAY", dateWidth, "DATE", timeWidth, "TIME", offsetWidth, "UTC OFFSET")),
+			headerStyle.Render(fmt.Sprintf("%-*s  %-*s  %-*s  %-*s  %-*s  %-*s", nameWidth, "CITY", dayWidth, "DAY", dateWidth, "DATE", timeWidth, "TIME", offsetWidth, "UTC OFFSET", barWidth, daylightHeader)),
 			borderStyle.Render(strings.Repeat("─", contentWidth)),
 		)
+	} else {
+		lines = append(lines, headerStyle.Render(fmt.Sprintf("%-*s  %-*s  %-*s", nameWidth, truncate("CITY", nameWidth), compactTimeWidth, "TIME", barWidth, truncate(daylightHeader, barWidth))))
 	}
 	if len(m.cities) == 0 {
 		lines = append(lines, mutedStyle.Render("No cities yet. Press m to manage cities."))
@@ -592,14 +604,15 @@ func (m model) viewClock() string {
 		utcTime := m.now.UTC()
 		if compact {
 			value := utcTime.Format("15:04")
-			labelWidth := max(1, contentWidth-lipgloss.Width(value)-1)
-			row := withRowBackground(utcStyle, rowIndex).Render(truncate("UTC", labelWidth)) + " " +
-				withRowBackground(timeStyle, rowIndex).Render(value)
+			row := withRowBackground(utcStyle, rowIndex).Render(padRight(truncate("UTC", nameWidth), nameWidth)) + "  " +
+				withRowBackground(timeStyle, rowIndex).Render(fmt.Sprintf("%-*s", compactTimeWidth, value)) + "  " +
+				withRowBackground(timeStyle, rowIndex).Render(strings.Repeat(" ", barWidth))
 			lines = append(lines, row)
 			return
 		}
 		row := withRowBackground(utcStyle, rowIndex).Render(fmt.Sprintf("%-*s", nameWidth, "UTC")) + "  " +
-			withRowBackground(timeStyle, rowIndex).Render(fmt.Sprintf("%-*s  %-*s  %-*s  %-*s", dayWidth, utcTime.Format(dayFormat), dateWidth, utcTime.Format(dateFormat), timeWidth, utcTime.Format(timeFormat), offsetWidth, utcTime.Format(offsetFormat)))
+			withRowBackground(timeStyle, rowIndex).Render(fmt.Sprintf("%-*s  %-*s  %-*s  %-*s", dayWidth, utcTime.Format(dayFormat), dateWidth, utcTime.Format(dateFormat), timeWidth, utcTime.Format(timeFormat), offsetWidth, utcTime.Format(offsetFormat))) + "  " +
+			withRowBackground(timeStyle, rowIndex).Render(strings.Repeat(" ", barWidth))
 		lines = append(lines, row)
 	}
 	for i, city := range m.cities {
@@ -614,31 +627,40 @@ func (m model) viewClock() string {
 		location, err := time.LoadLocation(city.Timezone)
 		if err != nil {
 			if compact {
-				row := withRowBackground(mutedStyle, rowIndex).Render(truncate(label+" invalid time zone", contentWidth))
+				row := withRowBackground(mutedStyle, rowIndex).Render(padRight(truncate(label, nameWidth), nameWidth)) + "  " +
+					withRowBackground(mutedStyle, rowIndex).Render(padRight(truncate("invalid", compactTimeWidth), compactTimeWidth)) + "  " +
+					withRowBackground(mutedStyle, rowIndex).Render(padRight(truncate("invalid time zone", barWidth), barWidth))
 				lines = append(lines, row)
 				continue
 			}
-			name := truncate(label, nameWidth)
-			row := withRowBackground(cityStyle, rowIndex).Render(fmt.Sprintf("%-*s  ", nameWidth, name)) + withRowBackground(mutedStyle, rowIndex).Render("invalid time zone")
+			name := withRowBackground(cityStyle, rowIndex).Render(fmt.Sprintf("%-*s", nameWidth, truncate(label, nameWidth)))
+			row := name + "  " + withRowBackground(mutedStyle, rowIndex).Render(fmt.Sprintf("%-*s  %-*s  %-*s  %-*s", dayWidth, "", dateWidth, "", timeWidth, "", offsetWidth, "")) + "  " + withRowBackground(mutedStyle, rowIndex).Render(padRight(truncate("invalid time zone", barWidth), barWidth))
 			lines = append(lines, row)
 			continue
 		}
 
 		if compact {
 			value := m.now.In(location).Format("15:04")
-			row := truncate(label, contentWidth-lipgloss.Width(value)-1) + " " + value
-			lines = append(lines, withRowBackground(timeStyle, rowIndex).Render(truncate(row, contentWidth)))
+			intervals, hasCoordinates := cityDaylightIntervals(city, m.catalog, location, utcDayStart)
+			bar := renderDaylightBar(intervals, hasCoordinates, barWidth, utcDayStart, utcDayEnd, m.now, rowIndex, barStyles, markerStyle, mutedStyle)
+			name := withRowBackground(timeStyle, rowIndex).Render(padRight(truncate(label, nameWidth), nameWidth))
+			row := name + "  " + withRowBackground(timeStyle, rowIndex).Render(fmt.Sprintf("%-*s", compactTimeWidth, value)) + "  " + bar
+			lines = append(lines, row)
 			continue
 		}
-		name := truncate(label, nameWidth)
 		localTime := m.now.In(location)
-		row := withRowBackground(cityStyle, rowIndex).Render(fmt.Sprintf("%-*s", nameWidth, name)) + "  " +
-			withRowBackground(timeStyle, rowIndex).Render(fmt.Sprintf("%-*s  %-*s  %-*s  %-*s", dayWidth, localTime.Format(dayFormat), dateWidth, localTime.Format(dateFormat), timeWidth, localTime.Format(timeFormat), offsetWidth, localTime.Format(offsetFormat)))
+		name := withRowBackground(cityStyle, rowIndex).Render(fmt.Sprintf("%-*s", nameWidth, truncate(label, nameWidth)))
+		intervals, hasCoordinates := cityDaylightIntervals(city, m.catalog, location, utcDayStart)
+		bar := renderDaylightBar(intervals, hasCoordinates, barWidth, utcDayStart, utcDayEnd, m.now, rowIndex, barStyles, markerStyle, mutedStyle)
+		row := name + "  " +
+			withRowBackground(timeStyle, rowIndex).Render(fmt.Sprintf("%-*s  %-*s  %-*s  %-*s", dayWidth, localTime.Format(dayFormat), dateWidth, localTime.Format(dateFormat), timeWidth, localTime.Format(timeFormat), offsetWidth, localTime.Format(offsetFormat))) + "  " + bar
 		lines = append(lines, row)
 	}
 	if m.showUTC && utcIndex == len(m.cities) {
 		appendUTCRow(utcIndex)
 	}
+	legend := barStyles[lightNight].Render(nightDotGlyph+nightStarGlyph) + " night  " + barStyles[lightTwilight].Render(twilightGlyph) + " twilight  " + barStyles[lightDay].Render(daylightGlyph) + " daylight  " + markerStyle.Render(nowGlyph) + " now"
+	lines = append(lines, mutedStyle.Render(truncate(legend, contentWidth)))
 	lines = append(lines, mutedStyle.Render(truncate("m manage cities", contentWidth)))
 
 	return strings.Join(lines, "\n")
@@ -688,7 +710,10 @@ func (m model) cityLabel(index int) string {
 	if index < 0 || index >= len(m.cities) {
 		return ""
 	}
-	city := m.cities[index]
+	return m.cityLabelFor(m.cities[index])
+}
+
+func (m model) cityLabelFor(city city) string {
 	duplicates := 0
 	for _, candidate := range m.cities {
 		if candidate.Name == city.Name {

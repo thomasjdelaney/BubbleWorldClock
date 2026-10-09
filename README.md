@@ -2,6 +2,8 @@
 
 A terminal world clock built with [Bubble Tea](https://github.com/charmbracelet/bubbletea). Track local dates, times, and UTC offsets for cities from a bundled offline catalog.
 
+Clock rows include a daylight timeline in the rightmost column. Each bar spans the current UTC day and shows night, civil twilight, daylight, and the current time using each city's coordinates. Cities without catalog coordinates show an unavailable label.
+
 ![Bubble World Clock showing sorted city times and the UTC reference row](images/bubble-world-clock-table-view.png)
 
 ## Install

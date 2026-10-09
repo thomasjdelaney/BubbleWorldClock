@@ -18,15 +18,18 @@ import (
 )
 
 type cityRecord struct {
-	GeoNameID   int64  `json:"geoname_id"`
-	Name        string `json:"name"`
-	ASCIIName   string `json:"ascii_name"`
-	CountryCode string `json:"country_code"`
-	Country     string `json:"country"`
-	Admin1Code  string `json:"admin1_code"`
-	Region      string `json:"region"`
-	Timezone    string `json:"timezone"`
-	Population  int64  `json:"population"`
+	GeoNameID        int64   `json:"geoname_id"`
+	Name             string  `json:"name"`
+	ASCIIName        string  `json:"ascii_name"`
+	CountryCode      string  `json:"country_code"`
+	Country          string  `json:"country"`
+	Admin1Code       string  `json:"admin1_code"`
+	Region           string  `json:"region"`
+	Timezone         string  `json:"timezone"`
+	Latitude         float64 `json:"latitude"`
+	Longitude        float64 `json:"longitude"`
+	CoordinatesKnown bool    `json:"coordinates_known,omitempty"`
+	Population       int64   `json:"population"`
 }
 
 func main() {
@@ -102,6 +105,12 @@ func generate(citiesPath, countriesPath, admin1Path, outputPath string) error {
 			continue
 		}
 		timezone := strings.TrimSpace(row[17])
+		latitude, latitudeErr := strconv.ParseFloat(strings.TrimSpace(row[4]), 64)
+		longitude, longitudeErr := strconv.ParseFloat(strings.TrimSpace(row[5]), 64)
+		coordinatesKnown := latitudeErr == nil && longitudeErr == nil && latitude >= -90 && latitude <= 90 && longitude >= -180 && longitude <= 180
+		if !coordinatesKnown {
+			latitude, longitude = 0, 0
+		}
 		if _, err := time.LoadLocation(timezone); err != nil {
 			invalidZones++
 			continue
@@ -111,15 +120,18 @@ func generate(citiesPath, countriesPath, admin1Path, outputPath string) error {
 		regionName := admin1[countryCode+"."+admin1Code]
 		population, _ := strconv.ParseInt(row[14], 10, 64)
 		records = append(records, cityRecord{
-			GeoNameID:   id,
-			Name:        strings.TrimSpace(row[1]),
-			ASCIIName:   strings.TrimSpace(row[2]),
-			CountryCode: countryCode,
-			Country:     countryName,
-			Admin1Code:  admin1Code,
-			Region:      regionName,
-			Timezone:    timezone,
-			Population:  population,
+			GeoNameID:        id,
+			Name:             strings.TrimSpace(row[1]),
+			ASCIIName:        strings.TrimSpace(row[2]),
+			CountryCode:      countryCode,
+			Country:          countryName,
+			Admin1Code:       admin1Code,
+			Region:           regionName,
+			Timezone:         timezone,
+			Latitude:         latitude,
+			Longitude:        longitude,
+			CoordinatesKnown: coordinatesKnown,
+			Population:       population,
 		})
 	}
 	if len(records) == 0 {
