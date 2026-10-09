@@ -792,6 +792,77 @@ func TestCityClockShowsDaylightBarInBothLayouts(t *testing.T) {
 	}
 }
 
+func TestCityClockStaysCompactAndLeftAlignedOnWideTerminal(t *testing.T) {
+	m := testModel([]city{{Name: "Tokyo", Timezone: "Asia/Tokyo"}})
+	m.width = 160
+
+	view := m.View().Content
+	lines := strings.Split(view, "\n")
+	var dividerWidths []int
+	for _, line := range lines {
+		width := lipgloss.Width(line)
+		if strings.Contains(line, "─") {
+			dividerWidths = append(dividerWidths, width)
+		}
+	}
+	if len(dividerWidths) != 2 {
+		t.Fatalf("got %d table dividers, want 2: %q", len(dividerWidths), view)
+	}
+	if dividerWidths[0] != dividerWidths[1] {
+		t.Fatalf("table dividers have different widths: %v", dividerWidths)
+	}
+	if dividerWidths[0] >= m.width-2 {
+		t.Fatalf("table divider still stretches toward terminal width: %d cells", dividerWidths[0])
+	}
+}
+
+func TestClockLayoutDoesNotExpandCityColumnIntoSpareWidth(t *testing.T) {
+	columns := visibleClockColumns(defaultColumnPreferences())
+	widths, gap, compact := clockLayoutWidths(160, 13, columns)
+	if compact {
+		t.Fatal("wide layout was unexpectedly compact")
+	}
+	if widths[0] != 13 {
+		t.Fatalf("city column expanded to %d cells, want its 13-cell natural width", widths[0])
+	}
+	daylightIndex := len(widths) - 1
+	if widths[daylightIndex] != 48 {
+		t.Fatalf("daylight column width = %d, want its 48-cell maximum", widths[daylightIndex])
+	}
+	total := gap * (len(widths) - 1)
+	for _, width := range widths {
+		total += width
+	}
+	if total >= 160 {
+		t.Fatalf("natural table width %d consumes the 160-cell terminal", total)
+	}
+}
+
+func TestCityClockUsesWidestCityNameWithoutTruncatingIt(t *testing.T) {
+	widestName := "A Remarkably Long City Name"
+	m := testModel([]city{
+		{Name: "Paris", Timezone: "Europe/Paris"},
+		{Name: widestName, Timezone: "Asia/Tokyo"},
+	})
+	m.width = 160
+
+	view := m.View().Content
+	if !strings.Contains(view, widestName) {
+		t.Fatalf("clock view truncated the widest city name %q: %q", widestName, view)
+	}
+	lines := strings.Split(view, "\n")
+	var dividerWidth int
+	for _, line := range lines {
+		if strings.Contains(line, "─") {
+			dividerWidth = lipgloss.Width(line)
+			break
+		}
+	}
+	if dividerWidth < lipgloss.Width(widestName) {
+		t.Fatalf("table width %d is narrower than widest city name %d", dividerWidth, lipgloss.Width(widestName))
+	}
+}
+
 func TestCityWithoutCatalogCoordinatesShowsUnavailableBar(t *testing.T) {
 	value := city{Name: "Custom", Timezone: "Europe/Paris"}
 	if _, _, ok := cityCoordinates(value, []cityRecord{{Name: "Custom", Timezone: "Europe/Paris"}}); ok {
@@ -1081,8 +1152,8 @@ func TestViewStaysWithinNarrowWidth(t *testing.T) {
 
 	m.width = 56
 	view = m.View().Content
-	if !strings.Contains(view, "UTC OFFSET") {
-		t.Fatal("compact view omitted a selected column")
+	if !strings.Contains(view, "A Very Long City Name") {
+		t.Fatal("compact view truncated the widest city name")
 	}
 	for _, line := range strings.Split(view, "\n") {
 		if width := lipgloss.Width(line); width > m.width {
@@ -1092,8 +1163,8 @@ func TestViewStaysWithinNarrowWidth(t *testing.T) {
 
 	m.width = 55
 	view = m.View().Content
-	if !strings.Contains(view, "UTC OFFSET") {
-		t.Fatal("narrow view omitted a selected UTC offset column")
+	if !strings.Contains(view, "A Very Long City Name") {
+		t.Fatal("narrow view truncated the widest city name")
 	}
 	for _, line := range strings.Split(view, "\n") {
 		if width := lipgloss.Width(line); width > m.width {
@@ -1102,9 +1173,8 @@ func TestViewStaysWithinNarrowWidth(t *testing.T) {
 	}
 
 	m.width = 20
-	for _, line := range strings.Split(m.View().Content, "\n") {
-		if width := lipgloss.Width(line); width > m.width {
-			t.Fatalf("compact rendered line exceeds terminal width: %d > %d: %q", width, m.width, line)
-		}
+	view = m.View().Content
+	if !strings.Contains(view, "A Very Long City Name") {
+		t.Fatalf("narrow view truncated the city name: %q", view)
 	}
 }

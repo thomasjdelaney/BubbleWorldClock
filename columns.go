@@ -111,7 +111,8 @@ func clockLayoutWidths(contentWidth, cityWidth int, columns []clockColumn) ([]in
 		}
 		for totalWidth() > contentWidth {
 			largest := -1
-			for index, width := range widths {
+			for index := 1; index < len(widths); index++ {
+				width := widths[index]
 				if width > 1 && (largest < 0 || width > widths[largest]) {
 					largest = index
 				}
@@ -131,7 +132,6 @@ func clockLayoutWidths(contentWidth, cityWidth int, columns []clockColumn) ([]in
 			widths[index+1] += extra
 			remaining -= extra
 		}
-		widths[0] += remaining
 	}
 	return widths, gap, compact
 }

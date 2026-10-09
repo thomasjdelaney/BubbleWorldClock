@@ -66,9 +66,13 @@ func (m model) viewClock() string {
 
 	desiredCityWidth := 4
 	for i := range m.cities {
-		desiredCityWidth = max(desiredCityWidth, min(13, lipgloss.Width(m.cityLabel(i))))
+		desiredCityWidth = max(desiredCityWidth, lipgloss.Width(m.cityLabel(i)))
 	}
 	widths, gap, compact := clockLayoutWidths(contentWidth, desiredCityWidth, columns)
+	tableWidth := gap * (len(widths) - 1)
+	for _, width := range widths {
+		tableWidth += width
+	}
 	cityWidth := widths[0]
 	barWidth := 0
 	for index, column := range columns {
@@ -95,7 +99,7 @@ func (m model) viewClock() string {
 	utcDayEnd := utcDayStart.Add(24 * time.Hour)
 	lines := []string{titleStyle.Render(truncate("Bubble World Clock", contentWidth))}
 	if !compact {
-		lines = append(lines, mutedStyle.Render(strings.Repeat("─", contentWidth)))
+		lines = append(lines, mutedStyle.Render(strings.Repeat("─", tableWidth)))
 	}
 	header := []string{padRight(truncate("CITY", cityWidth), cityWidth)}
 	for index, column := range columns {
@@ -103,7 +107,7 @@ func (m model) viewClock() string {
 	}
 	lines = append(lines, headerStyle.Render(strings.Join(header, strings.Repeat(" ", gap))))
 	if !compact {
-		lines = append(lines, borderStyle.Render(strings.Repeat("─", contentWidth)))
+		lines = append(lines, borderStyle.Render(strings.Repeat("─", tableWidth)))
 	}
 	if len(m.cities) == 0 {
 		lines = append(lines, mutedStyle.Render("No cities yet. Press m for cities or c for columns."))
