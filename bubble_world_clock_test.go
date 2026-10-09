@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
@@ -230,6 +231,13 @@ func TestWatchlistRoundTripsSortModeAndLoadsLegacyArrays(t *testing.T) {
 		Cities:  []city{{Name: "Tokyo", Timezone: "Asia/Tokyo"}},
 		Sort:    sortOffsetDescending,
 		ShowUTC: true,
+		Columns: []columnPreference{
+			{ID: columnDaylight, Visible: true},
+			{ID: columnTime, Visible: false},
+			{ID: columnDate, Visible: true},
+			{ID: columnDay, Visible: true},
+			{ID: columnUTCOffset, Visible: false},
+		},
 	}
 	if err := saveWatchlist(configPath, want); err != nil {
 		t.Fatal(err)
@@ -238,7 +246,7 @@ func TestWatchlistRoundTripsSortModeAndLoadsLegacyArrays(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got.Sort != want.Sort || got.ShowUTC != want.ShowUTC || len(got.Cities) != 1 || got.Cities[0] != want.Cities[0] {
+	if got.Sort != want.Sort || got.ShowUTC != want.ShowUTC || len(got.Cities) != 1 || got.Cities[0] != want.Cities[0] || !reflect.DeepEqual(got.Columns, want.Columns) {
 		t.Fatalf("watchlist=%#v, want %#v", got, want)
 	}
 
@@ -254,15 +262,139 @@ func TestWatchlistRoundTripsSortModeAndLoadsLegacyArrays(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if legacy.Sort != sortNameAscending || legacy.ShowUTC || len(legacy.Cities) != 1 {
+	if legacy.Sort != sortNameAscending || legacy.ShowUTC || len(legacy.Cities) != 1 || !reflect.DeepEqual(legacy.Columns, defaultColumnPreferences()) {
 		t.Fatalf("legacy config=%#v, want name ascending default", legacy)
 	}
 	if err := os.WriteFile(configPath, []byte(`{"cities":[],"sort":"name_asc"}`), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	omitted, err := readWatchlist(configPath)
-	if err != nil || omitted.ShowUTC {
-		t.Fatalf("watchlist without show_utc=%t err=%v, want default false", omitted.ShowUTC, err)
+	if err != nil || omitted.ShowUTC || !reflect.DeepEqual(omitted.Columns, defaultColumnPreferences()) {
+		t.Fatalf("watchlist omitted preferences=%#v err=%v, want current defaults", omitted, err)
+	}
+}
+
+func TestColumnPreferencesNormalizeUnknownDuplicateAndMissingEntries(t *testing.T) {
+	got := normalizeColumnPreferences([]columnPreference{
+		{ID: columnDaylight, Visible: false},
+		{ID: "unknown", Visible: true},
+		{ID: columnDaylight, Visible: true},
+		{ID: columnTime, Visible: false},
+	})
+	want := []columnPreference{
+		{ID: columnDaylight, Visible: false},
+		{ID: columnTime, Visible: false},
+		{ID: columnDay, Visible: true},
+		{ID: columnDate, Visible: true},
+		{ID: columnUTCOffset, Visible: true},
+	}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("normalized preferences=%#v, want %#v", got, want)
+	}
+}
+
+func TestManageColumnsToggleReorderResetAndPersist(t *testing.T) {
+	m := testModel([]city{{Name: "Tokyo", Timezone: "Asia/Tokyo"}})
+	m.screen = manageScreen
+	m.configPath = filepath.Join(t.TempDir(), "cities.json")
+	updated, _ := m.Update(tea.KeyPressMsg(tea.Key{Text: "c", Code: 'c'}))
+	current := updated.(model)
+	if current.screen != columnsScreen || !reflect.DeepEqual(current.columns, defaultColumnPreferences()) {
+		t.Fatalf("opening columns screen: screen=%d columns=%#v", current.screen, current.columns)
+	}
+
+	updated, cmd := current.Update(tea.KeyPressMsg(tea.Key{Code: tea.KeySpace}))
+	current = updated.(model)
+	if current.columns[0].Visible || cmd == nil {
+		t.Fatal("Space did not hide the selected Day column and schedule a save")
+	}
+	updated, _ = current.Update(cmd())
+	current = updated.(model)
+	loaded, err := loadWatchlistConfig(m.configPath, filepath.Join(t.TempDir(), "legacy.json"), nil)
+	if err != nil || loaded.Columns[0].Visible {
+		t.Fatalf("hidden column did not persist: columns=%#v err=%v", loaded.Columns, err)
+	}
+
+	updated, cmd = current.Update(tea.KeyPressMsg(tea.Key{Code: tea.KeyRight}))
+	current = updated.(model)
+	if current.columns[0].ID != columnDate || current.columns[1].ID != columnDay || cmd == nil {
+		t.Fatalf("right arrow did not reorder selected column: %#v", current.columns)
+	}
+	updated, _ = current.Update(cmd())
+	current = updated.(model)
+	loaded, err = loadWatchlistConfig(m.configPath, filepath.Join(t.TempDir(), "legacy.json"), nil)
+	if err != nil || loaded.Columns[0].ID != columnDate || loaded.Columns[1].ID != columnDay {
+		t.Fatalf("reordered columns did not persist: columns=%#v err=%v", loaded.Columns, err)
+	}
+	updated, cmd = current.Update(tea.KeyPressMsg(tea.Key{Text: "r", Code: 'r'}))
+	current = updated.(model)
+	if !reflect.DeepEqual(current.columns, defaultColumnPreferences()) || cmd == nil {
+		t.Fatal("r did not restore default columns and schedule a save")
+	}
+	updated, _ = current.Update(cmd())
+	loaded, err = loadWatchlistConfig(m.configPath, filepath.Join(t.TempDir(), "legacy.json"), nil)
+	if err != nil || !reflect.DeepEqual(loaded.Columns, defaultColumnPreferences()) {
+		t.Fatalf("default column preferences did not persist: columns=%#v err=%v", loaded.Columns, err)
+	}
+}
+
+func TestManageColumnsScreenShowsFixedCityAndControls(t *testing.T) {
+	m := testModel(nil)
+	m.screen = manageScreen
+	m.help.ShowAll = true
+	updated, _ := m.Update(tea.KeyPressMsg(tea.Key{Text: "c", Code: 'c'}))
+	columns := updated.(model)
+	view := columns.View().Content
+	for _, want := range []string{"Manage columns", "[x] City (fixed first)", "Daylight", "space", "toggle visibility", "move left", "move right", "reset columns"} {
+		if !strings.Contains(view, want) {
+			t.Errorf("column manager is missing %q", want)
+		}
+	}
+}
+
+func TestClockViewUsesConfiguredColumnOrderAndKeepsCityFirst(t *testing.T) {
+	m := testModel([]city{{Name: "Tokyo", Timezone: "Asia/Tokyo"}})
+	m.width = 120
+	m.columns = []columnPreference{
+		{ID: columnDaylight, Visible: true},
+		{ID: columnTime, Visible: false},
+		{ID: columnDate, Visible: true},
+		{ID: columnUTCOffset, Visible: true},
+		{ID: columnDay, Visible: true},
+	}
+	m.showUTC = true
+	view := m.View().Content
+	header := strings.Split(view, "\n")[2]
+	cityIndex := strings.Index(header, "CITY")
+	daylightIndex := strings.Index(header, "DAYLIGHT")
+	dateIndex := strings.Index(header, "DATE")
+	utcOffsetIndex := strings.Index(header, "UTC OFFSET")
+	dayIndex := strings.LastIndex(header, "DAY")
+	if !(cityIndex >= 0 && cityIndex < daylightIndex && daylightIndex < dateIndex && dateIndex < utcOffsetIndex && utcOffsetIndex < dayIndex) {
+		t.Fatalf("header does not follow City plus configured order: %q", header)
+	}
+	if strings.Contains(header, "TIME") {
+		t.Fatalf("hidden Time column is still rendered: %q", header)
+	}
+	if !strings.Contains(view, "UTC") || !strings.Contains(view, "02 Jan 2026") {
+		t.Fatalf("UTC row did not use selected columns: %q", view)
+	}
+}
+
+func TestClockViewCanHideEveryOptionalColumn(t *testing.T) {
+	m := testModel([]city{{Name: "Tokyo", Timezone: "Asia/Tokyo"}})
+	m.columns = defaultColumnPreferences()
+	for index := range m.columns {
+		m.columns[index].Visible = false
+	}
+	header := strings.Split(m.View().Content, "\n")[2]
+	if !strings.Contains(header, "CITY") {
+		t.Fatalf("City column disappeared when optional columns were hidden: %q", header)
+	}
+	for _, hidden := range []string{"DAY", "DATE", "TIME", "UTC OFFSET", "DAYLIGHT"} {
+		if strings.Contains(header, hidden) {
+			t.Errorf("hidden column %q still appears in header %q", hidden, header)
+		}
 	}
 }
 
@@ -797,7 +929,7 @@ func TestExpandedHelpMatchesActiveScreen(t *testing.T) {
 	clockModel.help.ShowAll = true
 
 	clockView := clockModel.View().Content
-	for _, want := range []string{"quit", "more help", "manage cities"} {
+	for _, want := range []string{"quit", "more help", "manage cities", "manage columns"} {
 		if !strings.Contains(clockView, want) {
 			t.Errorf("clock help is missing %q", want)
 		}
@@ -813,13 +945,35 @@ func TestExpandedHelpMatchesActiveScreen(t *testing.T) {
 	if !manageModel.help.ShowAll {
 		t.Fatal("expanded help did not remain open when entering city management")
 	}
+	updated, _ = clockModel.Update(tea.KeyPressMsg(tea.Key{Text: "c", Code: 'c'}))
+	columnsModel := updated.(model)
+	if columnsModel.screen != columnsScreen {
+		t.Fatal("c did not open column management from the clock screen")
+	}
+	if !columnsModel.help.ShowAll {
+		t.Fatal("expanded help did not remain open when entering column management")
+	}
+	updated, _ = columnsModel.Update(tea.KeyPressMsg(tea.Key{Code: tea.KeyEsc}))
+	if returned := updated.(model); returned.screen != clockScreen {
+		t.Fatalf("Escape from column management returned to %q, want clock", returned.screen)
+	}
+
+	updated, _ = manageModel.Update(tea.KeyPressMsg(tea.Key{Text: "c", Code: 'c'}))
+	columnsModel = updated.(model)
+	if columnsModel.screen != columnsScreen {
+		t.Fatal("c did not open column management from city management")
+	}
+	updated, _ = columnsModel.Update(tea.KeyPressMsg(tea.Key{Code: tea.KeyEsc}))
+	if returned := updated.(model); returned.screen != clockScreen {
+		t.Fatalf("Escape from column management opened from city management returned to %q, want clock", returned.screen)
+	}
 	manageView := manageModel.View().Content
-	for _, want := range []string{"UTC reference: off", "u toggle UTC reference"} {
+	for _, want := range []string{"UTC reference: off", "u toggle UTC reference", "c columns"} {
 		if !strings.Contains(manageView, want) {
 			t.Errorf("management view is missing %q", want)
 		}
 	}
-	for _, want := range []string{"quit", "more help", "back", "add city", "remove city", "toggle UTC reference", "move up", "retry save", "cycle sort order"} {
+	for _, want := range []string{"quit", "more help", "back", "add city", "remove city", "manage columns", "toggle UTC reference", "move up", "retry save", "cycle sort order"} {
 		if !strings.Contains(manageView, want) {
 			t.Errorf("management help is missing %q", want)
 		}
@@ -914,21 +1068,32 @@ func TestViewStaysWithinNarrowWidth(t *testing.T) {
 		}
 	}
 
-	m.width = 56
+	m.width = 120
 	view := m.View().Content
 	if !strings.Contains(view, "UTC OFFSET") {
 		t.Fatal("full-width view does not include the UTC offset column")
 	}
 	for _, line := range strings.Split(view, "\n") {
 		if width := lipgloss.Width(line); width > m.width {
-			t.Fatalf("rendered line exceeds terminal width at full-table boundary: %d > %d: %q", width, m.width, line)
+			t.Fatalf("rendered line exceeds terminal width: %d > %d: %q", width, m.width, line)
+		}
+	}
+
+	m.width = 56
+	view = m.View().Content
+	if !strings.Contains(view, "UTC OFFSET") {
+		t.Fatal("compact view omitted a selected column")
+	}
+	for _, line := range strings.Split(view, "\n") {
+		if width := lipgloss.Width(line); width > m.width {
+			t.Fatalf("rendered line exceeds terminal width at compact boundary: %d > %d: %q", width, m.width, line)
 		}
 	}
 
 	m.width = 55
 	view = m.View().Content
-	if strings.Contains(view, "UTC OFFSET") {
-		t.Fatal("compact view unexpectedly includes the full-table header")
+	if !strings.Contains(view, "UTC OFFSET") {
+		t.Fatal("narrow view omitted a selected UTC offset column")
 	}
 	for _, line := range strings.Split(view, "\n") {
 		if width := lipgloss.Width(line); width > m.width {

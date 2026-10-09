@@ -68,23 +68,6 @@ func padRight(value string, width int) string {
 	return value + strings.Repeat(" ", max(0, width-lipgloss.Width(value)))
 }
 
-func daylightLayoutWidths(contentWidth int, compact bool, desiredNameWidth, fixedColumnsWidth, daylightWidth, maxBarWidth int) (barWidth, nameWidth, compactTimeWidth int) {
-	if compact {
-		compactTimeWidth = min(5, max(1, contentWidth-2))
-		available := max(1, contentWidth-compactTimeWidth-4)
-		nameWidth = min(desiredNameWidth, max(1, available-1))
-		barWidth = max(1, min(maxBarWidth, contentWidth-nameWidth-compactTimeWidth-4))
-		nameWidth = max(1, contentWidth-compactTimeWidth-4-barWidth)
-		return barWidth, nameWidth, compactTimeWidth
-	}
-
-	maxNameWidth := max(4, contentWidth-fixedColumnsWidth-daylightWidth)
-	nameWidth = min(desiredNameWidth, min(13, maxNameWidth))
-	barWidth = min(maxBarWidth, max(daylightWidth, contentWidth-fixedColumnsWidth-nameWidth))
-	nameWidth = contentWidth - fixedColumnsWidth - barWidth
-	return barWidth, nameWidth, 0
-}
-
 func cityDaylightIntervals(value city, catalog []cityRecord, location *time.Location, utcDayStart time.Time) ([]lightInterval, bool) {
 	latitude, longitude, ok := cityCoordinates(value, catalog)
 	if !ok {

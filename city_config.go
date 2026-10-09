@@ -11,9 +11,10 @@ import (
 )
 
 type watchlistConfig struct {
-	Cities  []city   `json:"cities"`
-	Sort    sortMode `json:"sort"`
-	ShowUTC bool     `json:"show_utc,omitempty"`
+	Cities  []city             `json:"cities"`
+	Sort    sortMode           `json:"sort"`
+	ShowUTC bool               `json:"show_utc,omitempty"`
+	Columns []columnPreference `json:"columns,omitempty"`
 }
 
 func loadWatchlistConfig(configPath, legacyPath string, defaults []city) (watchlistConfig, error) {
@@ -36,7 +37,7 @@ func loadWatchlistConfig(configPath, legacyPath string, defaults []city) (watchl
 		return watchlistConfig{}, fmt.Errorf("load legacy city config: %w", err)
 	}
 
-	return watchlistConfig{Cities: append([]city(nil), defaults...), Sort: sortNameAscending}, nil
+	return watchlistConfig{Cities: append([]city(nil), defaults...), Sort: sortNameAscending, Columns: defaultColumnPreferences()}, nil
 }
 
 func loadWatchlist(configPath, legacyPath string, defaults []city) ([]city, error) {
@@ -51,7 +52,7 @@ func readWatchlist(filename string) (watchlistConfig, error) {
 	}
 	var legacy []city
 	if err := json.Unmarshal(contents, &legacy); err == nil && legacy != nil {
-		return watchlistConfig{Cities: legacy, Sort: sortNameAscending}, nil
+		return watchlistConfig{Cities: legacy, Sort: sortNameAscending, Columns: defaultColumnPreferences()}, nil
 	}
 	var config watchlistConfig
 	if err := json.Unmarshal(contents, &config); err != nil {
@@ -63,6 +64,7 @@ func readWatchlist(filename string) (watchlistConfig, error) {
 	if !config.Sort.valid() {
 		config.Sort = sortNameAscending
 	}
+	config.Columns = normalizeColumnPreferences(config.Columns)
 	return config, nil
 }
 
@@ -75,6 +77,7 @@ func saveWatchlist(filename string, config watchlistConfig) error {
 	if !config.Sort.valid() {
 		config.Sort = sortNameAscending
 	}
+	config.Columns = normalizeColumnPreferences(config.Columns)
 	directory := filepath.Dir(filename)
 	if err := os.MkdirAll(directory, 0o700); err != nil {
 		return err
@@ -118,9 +121,10 @@ type citySaveResultMsg struct {
 	err error
 }
 
-func saveCitiesCmd(filename string, cities []city, sortMode sortMode, showUTC bool) tea.Cmd {
+func saveCitiesCmd(filename string, cities []city, sortMode sortMode, showUTC bool, columns []columnPreference) tea.Cmd {
 	snapshot := append([]city(nil), cities...)
+	columnSnapshot := append([]columnPreference(nil), columns...)
 	return func() tea.Msg {
-		return citySaveResultMsg{err: saveWatchlist(filename, watchlistConfig{Cities: snapshot, Sort: sortMode, ShowUTC: showUTC})}
+		return citySaveResultMsg{err: saveWatchlist(filename, watchlistConfig{Cities: snapshot, Sort: sortMode, ShowUTC: showUTC, Columns: columnSnapshot})}
 	}
 }

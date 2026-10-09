@@ -17,7 +17,6 @@ import (
 	"charm.land/bubbles/v2/list"
 	"charm.land/bubbles/v2/textinput"
 	tea "charm.land/bubbletea/v2"
-	"charm.land/lipgloss/v2"
 )
 
 //go:embed cities.json data/city_catalog.json
@@ -85,21 +84,27 @@ const (
 	clockScreen screen = iota
 	manageScreen
 	pickerScreen
+	columnsScreen
 )
 
 type keyMap struct {
-	Quit       key.Binding
-	ToggleHelp key.Binding
-	Manage     key.Binding
-	AddCity    key.Binding
-	RemoveCity key.Binding
-	Back       key.Binding
-	CursorUp   key.Binding
-	CursorDown key.Binding
-	ChooseCity key.Binding
-	RetrySave  key.Binding
-	Sort       key.Binding
-	ToggleUTC  key.Binding
+	Quit            key.Binding
+	ToggleHelp      key.Binding
+	Manage          key.Binding
+	AddCity         key.Binding
+	RemoveCity      key.Binding
+	Back            key.Binding
+	CursorUp        key.Binding
+	CursorDown      key.Binding
+	ChooseCity      key.Binding
+	RetrySave       key.Binding
+	Sort            key.Binding
+	ToggleUTC       key.Binding
+	ManageColumns   key.Binding
+	ToggleColumn    key.Binding
+	MoveColumnLeft  key.Binding
+	MoveColumnRight key.Binding
+	ResetColumns    key.Binding
 }
 
 func newKeyMap() keyMap {
@@ -152,6 +157,26 @@ func newKeyMap() keyMap {
 			key.WithKeys("u"),
 			key.WithHelp("u", "toggle UTC reference"),
 		),
+		ManageColumns: key.NewBinding(
+			key.WithKeys("c"),
+			key.WithHelp("c", "manage columns"),
+		),
+		ToggleColumn: key.NewBinding(
+			key.WithKeys("space"),
+			key.WithHelp("space", "toggle visibility"),
+		),
+		MoveColumnLeft: key.NewBinding(
+			key.WithKeys("left"),
+			key.WithHelp("←", "move left"),
+		),
+		MoveColumnRight: key.NewBinding(
+			key.WithKeys("right"),
+			key.WithHelp("→", "move right"),
+		),
+		ResetColumns: key.NewBinding(
+			key.WithKeys("r"),
+			key.WithHelp("r", "reset columns"),
+		),
 	}
 }
 
@@ -169,31 +194,39 @@ func (k screenHelpKeyMap) FullHelp() [][]key.Binding {
 	case manageScreen:
 		return [][]key.Binding{
 			{k.Quit, k.ToggleHelp, k.Back},
-			{k.AddCity, k.RemoveCity, k.ToggleUTC},
+			{k.AddCity, k.RemoveCity, k.ToggleUTC, k.ManageColumns},
 			{k.CursorUp, k.CursorDown, k.RetrySave, k.Sort},
 		}
+	case columnsScreen:
+		return [][]key.Binding{
+			{k.Quit, k.ToggleHelp, k.Back},
+			{k.CursorUp, k.CursorDown, k.ToggleColumn, k.MoveColumnLeft, k.MoveColumnRight},
+			{k.ResetColumns, k.RetrySave},
+		}
 	default:
-		return [][]key.Binding{{k.Quit, k.ToggleHelp, k.Manage}}
+		return [][]key.Binding{{k.Quit, k.ToggleHelp, k.Manage, k.ManageColumns}}
 	}
 }
 
 type model struct {
-	cities     []city
-	catalog    []cityRecord
-	picker     list.Model
-	screen     screen
-	selected   int
-	configPath string
-	sortMode   sortMode
-	showUTC    bool
-	status     string
-	saving     bool
-	unsaved    bool
-	now        time.Time
-	width      int
-	height     int
-	help       help.Model
-	keys       keyMap
+	cities         []city
+	catalog        []cityRecord
+	picker         list.Model
+	screen         screen
+	selected       int
+	configPath     string
+	sortMode       sortMode
+	showUTC        bool
+	columns        []columnPreference
+	selectedColumn int
+	status         string
+	saving         bool
+	unsaved        bool
+	now            time.Time
+	width          int
+	height         int
+	help           help.Model
+	keys           keyMap
 }
 
 func (m model) Init() tea.Cmd {
@@ -282,6 +315,8 @@ func (m model) updateKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 			m.screen = clockScreen
 		case key.Matches(msg, m.keys.AddCity):
 			return m.openPicker()
+		case key.Matches(msg, m.keys.ManageColumns):
+			m = m.openColumns()
 		case key.Matches(msg, m.keys.RemoveCity):
 			return m.removeCity()
 		case key.Matches(msg, m.keys.CursorUp):
@@ -308,6 +343,9 @@ func (m model) updateKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		}
 		return m, nil
 
+	case columnsScreen:
+		return m.updateColumnKey(msg)
+
 	default:
 		switch {
 		case key.Matches(msg, m.keys.Quit):
@@ -317,9 +355,74 @@ func (m model) updateKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		case key.Matches(msg, m.keys.Manage):
 			m.screen = manageScreen
 			m.status = ""
+		case key.Matches(msg, m.keys.ManageColumns):
+			m = m.openColumns()
 		}
 		return m, nil
 	}
+}
+
+func (m model) openColumns() model {
+	m.screen = columnsScreen
+	m.columns = normalizeColumnPreferences(m.columns)
+	m.selectedColumn = 0
+	m.status = ""
+	return m
+}
+
+func (m model) updateColumnKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
+	switch {
+	case key.Matches(msg, m.keys.Quit):
+		return m, tea.Quit
+	case key.Matches(msg, m.keys.ToggleHelp):
+		m.help.ShowAll = !m.help.ShowAll
+	case key.Matches(msg, m.keys.Back):
+		m.screen = clockScreen
+		m.status = ""
+	case key.Matches(msg, m.keys.CursorUp):
+		if m.selectedColumn > 0 {
+			m.selectedColumn--
+		}
+	case key.Matches(msg, m.keys.CursorDown):
+		if m.selectedColumn < len(m.columns)-1 {
+			m.selectedColumn++
+		}
+	case key.Matches(msg, m.keys.RetrySave) && m.unsaved && !m.saving:
+		return m, m.startSave()
+	case key.Matches(msg, m.keys.ResetColumns):
+		if m.saving {
+			m.status = "Wait for the current save to finish"
+			return m, nil
+		}
+		m.columns = defaultColumnPreferences()
+		m.selectedColumn = 0
+		return m, m.startSave()
+	case key.Matches(msg, m.keys.ToggleColumn):
+		if m.saving {
+			m.status = "Wait for the current save to finish"
+			return m, nil
+		}
+		if m.selectedColumn >= 0 && m.selectedColumn < len(m.columns) {
+			m.columns[m.selectedColumn].Visible = !m.columns[m.selectedColumn].Visible
+			return m, m.startSave()
+		}
+	case key.Matches(msg, m.keys.MoveColumnLeft), key.Matches(msg, m.keys.MoveColumnRight):
+		if m.saving {
+			m.status = "Wait for the current save to finish"
+			return m, nil
+		}
+		direction := -1
+		if key.Matches(msg, m.keys.MoveColumnRight) {
+			direction = 1
+		}
+		previousSelection := m.selectedColumn
+		m.columns, m.selectedColumn = moveColumnPreference(m.columns, m.selectedColumn, direction)
+		if previousSelection == m.selectedColumn {
+			return m, nil
+		}
+		return m, m.startSave()
+	}
+	return m, nil
 }
 
 func (m model) openPicker() (tea.Model, tea.Cmd) {
@@ -413,7 +516,7 @@ func (m *model) startSave() tea.Cmd {
 	m.saving = true
 	m.unsaved = true
 	m.status = "Saving changes..."
-	return saveCitiesCmd(m.configPath, m.cities, m.sortMode, m.showUTC)
+	return saveCitiesCmd(m.configPath, m.cities, m.sortMode, m.showUTC, m.columns)
 }
 
 func cityIdentity(value city) string {
@@ -485,261 +588,6 @@ func cityComesBefore(left, right city, mode sortMode, now time.Time) bool {
 	return left.GeoNameID < right.GeoNameID
 }
 
-func rowBackgroundStyle(index int) lipgloss.Style {
-	if index%2 == 0 {
-		return lipgloss.NewStyle().Background(lipgloss.Color("0"))
-	}
-	return lipgloss.NewStyle().Background(lipgloss.Color("236"))
-}
-
-func withRowBackground(style lipgloss.Style, index int) lipgloss.Style {
-	bg := rowBackgroundStyle(index)
-	return style.Background(bg.GetBackground())
-}
-
-func (m model) View() tea.View {
-	if m.width > 0 {
-		m.help.SetWidth(m.width)
-	}
-	var content string
-	switch m.screen {
-	case manageScreen:
-		content = m.viewManage()
-	case pickerScreen:
-		content = m.picker.View()
-		if m.status != "" {
-			content += "\n\n" + m.status
-		}
-		content += "\n\n" + truncate("country:Japan | tz:Paris | enter add | esc back", max(1, m.width))
-	default:
-		content = m.viewClock()
-	}
-	if helpView := m.help.View(screenHelpKeyMap{keyMap: m.keys, screen: m.screen}); helpView != "" && m.screen != pickerScreen {
-		content += "\n\n" + helpView
-	}
-	view := tea.NewView(content)
-	view.AltScreen = true
-	return view
-}
-
-func (m model) viewClock() string {
-	const (
-		dayFormat    = "Mon"
-		dateFormat   = "02 Jan 2006"
-		timeFormat   = "15:04:05"
-		offsetFormat = "-07:00"
-		maxBarWidth  = 48
-	)
-
-	width := m.width
-	if width == 0 {
-		width = 80
-	}
-	contentWidth := width - 2
-	if contentWidth < 1 {
-		contentWidth = 1
-	}
-	offsetWidth := lipgloss.Width("UTC OFFSET")
-	daylightHeader := "DAYLIGHT"
-	daylightWidth := lipgloss.Width(daylightHeader)
-	dayWidth := lipgloss.Width(dayFormat)
-	dateWidth := lipgloss.Width(dateFormat)
-	timeWidth := lipgloss.Width(timeFormat)
-
-	desiredNameWidth := 4
-	for i := range m.cities {
-		if cityWidth := lipgloss.Width(m.cityLabel(i)); cityWidth > desiredNameWidth {
-			desiredNameWidth = cityWidth
-		}
-	}
-	if desiredNameWidth > 13 {
-		desiredNameWidth = 13
-	}
-	fixedColumnsWidth := dayWidth + dateWidth + timeWidth + offsetWidth + 10
-	compact := contentWidth < fixedColumnsWidth+daylightWidth+4
-
-	titleStyle := lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("86"))
-	headerStyle := lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("229"))
-	cityStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("117"))
-	barStyles := map[lightLevel]lipgloss.Style{
-		lightNight:    lipgloss.NewStyle().Foreground(lipgloss.Color("245")),
-		lightTwilight: lipgloss.NewStyle().Foreground(lipgloss.Color("214")),
-		lightDay:      lipgloss.NewStyle().Foreground(lipgloss.Color("229")),
-	}
-	markerStyle := lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("86"))
-	utcStyle := lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("214"))
-	timeStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("252"))
-	mutedStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("245"))
-	borderStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("238"))
-
-	title := truncate("Bubble World Clock", contentWidth)
-	lines := []string{titleStyle.Render(title)}
-	utcDayStart := time.Date(m.now.UTC().Year(), m.now.UTC().Month(), m.now.UTC().Day(), 0, 0, 0, 0, time.UTC)
-	utcDayEnd := utcDayStart.Add(24 * time.Hour)
-	barWidth, nameWidth, compactTimeWidth := daylightLayoutWidths(contentWidth, compact, desiredNameWidth, fixedColumnsWidth, daylightWidth, maxBarWidth)
-
-	if !compact {
-		lines = append(lines,
-			mutedStyle.Render(strings.Repeat("─", contentWidth)),
-			headerStyle.Render(fmt.Sprintf("%-*s  %-*s  %-*s  %-*s  %-*s  %-*s", nameWidth, "CITY", dayWidth, "DAY", dateWidth, "DATE", timeWidth, "TIME", offsetWidth, "UTC OFFSET", barWidth, daylightHeader)),
-			borderStyle.Render(strings.Repeat("─", contentWidth)),
-		)
-	} else {
-		lines = append(lines, headerStyle.Render(fmt.Sprintf("%-*s  %-*s  %-*s", nameWidth, truncate("CITY", nameWidth), compactTimeWidth, "TIME", barWidth, truncate(daylightHeader, barWidth))))
-	}
-	if len(m.cities) == 0 {
-		lines = append(lines, mutedStyle.Render("No cities yet. Press m to manage cities."))
-	}
-	utcIndex := len(m.cities)
-	if m.showUTC {
-		utc := city{Name: "UTC", Timezone: "UTC"}
-		for index, city := range m.cities {
-			if cityComesBefore(utc, city, m.sortMode, m.now) {
-				utcIndex = index
-				break
-			}
-		}
-	}
-	appendUTCRow := func(rowIndex int) {
-		utcTime := m.now.UTC()
-		if compact {
-			value := utcTime.Format("15:04")
-			row := withRowBackground(utcStyle, rowIndex).Render(padRight(truncate("UTC", nameWidth), nameWidth)) + "  " +
-				withRowBackground(timeStyle, rowIndex).Render(fmt.Sprintf("%-*s", compactTimeWidth, value)) + "  " +
-				withRowBackground(timeStyle, rowIndex).Render(strings.Repeat(" ", barWidth))
-			lines = append(lines, row)
-			return
-		}
-		row := withRowBackground(utcStyle, rowIndex).Render(fmt.Sprintf("%-*s", nameWidth, "UTC")) + "  " +
-			withRowBackground(timeStyle, rowIndex).Render(fmt.Sprintf("%-*s  %-*s  %-*s  %-*s", dayWidth, utcTime.Format(dayFormat), dateWidth, utcTime.Format(dateFormat), timeWidth, utcTime.Format(timeFormat), offsetWidth, utcTime.Format(offsetFormat))) + "  " +
-			withRowBackground(timeStyle, rowIndex).Render(strings.Repeat(" ", barWidth))
-		lines = append(lines, row)
-	}
-	for i, city := range m.cities {
-		if m.showUTC && i == utcIndex {
-			appendUTCRow(i)
-		}
-		rowIndex := i
-		if m.showUTC && i >= utcIndex {
-			rowIndex++
-		}
-		label := m.cityLabel(i)
-		location, err := time.LoadLocation(city.Timezone)
-		if err != nil {
-			if compact {
-				row := withRowBackground(mutedStyle, rowIndex).Render(padRight(truncate(label, nameWidth), nameWidth)) + "  " +
-					withRowBackground(mutedStyle, rowIndex).Render(padRight(truncate("invalid", compactTimeWidth), compactTimeWidth)) + "  " +
-					withRowBackground(mutedStyle, rowIndex).Render(padRight(truncate("invalid time zone", barWidth), barWidth))
-				lines = append(lines, row)
-				continue
-			}
-			name := withRowBackground(cityStyle, rowIndex).Render(fmt.Sprintf("%-*s", nameWidth, truncate(label, nameWidth)))
-			row := name + "  " + withRowBackground(mutedStyle, rowIndex).Render(fmt.Sprintf("%-*s  %-*s  %-*s  %-*s", dayWidth, "", dateWidth, "", timeWidth, "", offsetWidth, "")) + "  " + withRowBackground(mutedStyle, rowIndex).Render(padRight(truncate("invalid time zone", barWidth), barWidth))
-			lines = append(lines, row)
-			continue
-		}
-
-		if compact {
-			value := m.now.In(location).Format("15:04")
-			intervals, hasCoordinates := cityDaylightIntervals(city, m.catalog, location, utcDayStart)
-			bar := renderDaylightBar(intervals, hasCoordinates, barWidth, utcDayStart, utcDayEnd, m.now, rowIndex, barStyles, markerStyle, mutedStyle)
-			name := withRowBackground(timeStyle, rowIndex).Render(padRight(truncate(label, nameWidth), nameWidth))
-			row := name + "  " + withRowBackground(timeStyle, rowIndex).Render(fmt.Sprintf("%-*s", compactTimeWidth, value)) + "  " + bar
-			lines = append(lines, row)
-			continue
-		}
-		localTime := m.now.In(location)
-		name := withRowBackground(cityStyle, rowIndex).Render(fmt.Sprintf("%-*s", nameWidth, truncate(label, nameWidth)))
-		intervals, hasCoordinates := cityDaylightIntervals(city, m.catalog, location, utcDayStart)
-		bar := renderDaylightBar(intervals, hasCoordinates, barWidth, utcDayStart, utcDayEnd, m.now, rowIndex, barStyles, markerStyle, mutedStyle)
-		row := name + "  " +
-			withRowBackground(timeStyle, rowIndex).Render(fmt.Sprintf("%-*s  %-*s  %-*s  %-*s", dayWidth, localTime.Format(dayFormat), dateWidth, localTime.Format(dateFormat), timeWidth, localTime.Format(timeFormat), offsetWidth, localTime.Format(offsetFormat))) + "  " + bar
-		lines = append(lines, row)
-	}
-	if m.showUTC && utcIndex == len(m.cities) {
-		appendUTCRow(utcIndex)
-	}
-	legend := barStyles[lightNight].Render(nightDotGlyph+nightStarGlyph) + " night  " + barStyles[lightTwilight].Render(twilightGlyph) + " twilight  " + barStyles[lightDay].Render(daylightGlyph) + " daylight  " + markerStyle.Render(nowGlyph) + " now"
-	lines = append(lines, mutedStyle.Render(truncate(legend, contentWidth)))
-	lines = append(lines, mutedStyle.Render(truncate("m manage cities", contentWidth)))
-
-	return strings.Join(lines, "\n")
-}
-
-func (m model) viewManage() string {
-	width := m.width
-	if width <= 0 {
-		width = 80
-	}
-	contentWidth := max(1, width-2)
-	titleStyle := lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("86"))
-	mutedStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("245"))
-	selectedStyle := lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("229")).Background(lipgloss.Color("24"))
-	lines := []string{
-		titleStyle.Render("Manage cities"),
-		mutedStyle.Render(strings.Repeat("─", contentWidth)),
-	}
-	if len(m.cities) == 0 {
-		lines = append(lines, "No cities on your clock. Press a to search the city catalog.")
-	} else {
-		for i, city := range m.cities {
-			marker := "  "
-			style := lipgloss.NewStyle()
-			if i == m.selected {
-				marker = "> "
-				style = selectedStyle
-			}
-			line := marker + m.cityLabel(i) + "  " + city.Timezone
-			lines = append(lines, style.Render(truncate(line, contentWidth)))
-		}
-	}
-	if m.status != "" {
-		lines = append(lines, "", mutedStyle.Render(truncate(m.status, contentWidth)))
-	}
-	lines = append(lines, "", mutedStyle.Render(truncate("sort: "+m.sortMode.label(), contentWidth)))
-	utcState := "off"
-	if m.showUTC {
-		utcState = "on"
-	}
-	lines = append(lines, mutedStyle.Render(truncate("UTC reference: "+utcState, contentWidth)))
-	lines = append(lines, mutedStyle.Render(truncate("up/down select | o sort | u toggle UTC reference | a add | d remove | esc back", contentWidth)))
-	return strings.Join(lines, "\n")
-}
-
-func (m model) cityLabel(index int) string {
-	if index < 0 || index >= len(m.cities) {
-		return ""
-	}
-	return m.cityLabelFor(m.cities[index])
-}
-
-func (m model) cityLabelFor(city city) string {
-	duplicates := 0
-	for _, candidate := range m.cities {
-		if candidate.Name == city.Name {
-			duplicates++
-		}
-	}
-	if duplicates < 2 {
-		return city.Name
-	}
-	context := strings.Join(nonEmpty([]string{city.Region, city.Country}), ", ")
-	if context == "" {
-		context = city.Timezone
-	}
-	return city.Name + " (" + context + ")"
-}
-
-func truncate(value string, width int) string {
-	if lipgloss.Width(value) <= width {
-		return value
-	}
-	if width <= 1 {
-		return "…"
-	}
-	return string([]rune(value)[:width-1]) + "…"
-}
-
 func main() {
 	if len(os.Args) > 1 {
 		switch os.Args[1] {
@@ -791,6 +639,7 @@ func main() {
 		configPath: configPath,
 		sortMode:   watchlist.Sort,
 		showUTC:    watchlist.ShowUTC,
+		columns:    watchlist.Columns,
 		now:        time.Now(),
 		help:       help.New(),
 		keys:       newKeyMap(),
