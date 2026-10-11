@@ -85,6 +85,10 @@ The default directory is `%LOCALAPPDATA%\Programs\BubbleWorldClock`; the install
 
 Linux users can also install from the `.deb` or `.rpm` packages on the [releases page](https://github.com/thomasjdelaney/BubbleWorldClock/releases).
 
+## Thanks
+
+Thanks to testers [Brendan Nolan](https://github.com/BrendanNolan), warpworld, and [VeryDave](https://www.twitch.tv/verydave) for their helpful suggestions and feedback.
+
 ## Develop
 
 Install Go 1.26.6 or newer, then run:
