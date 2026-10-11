@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"charm.land/bubbles/v2/help"
+	"charm.land/bubbles/v2/textinput"
 	tea "charm.land/bubbletea/v2"
 	"charm.land/lipgloss/v2"
 )
@@ -237,7 +238,11 @@ func TestWatchlistRoundTripsSortModeAndLoadsLegacyArrays(t *testing.T) {
 			{ID: columnDate, Visible: true},
 			{ID: columnDay, Visible: true},
 			{ID: columnUTCOffset, Visible: false},
+			{ID: columnTimezone, Visible: true},
 		},
+		TimezoneNameStyle: timezoneNameIANA,
+		DateFormat:        defaultDateLayout,
+		TimeFormat:        defaultTimeLayout,
 	}
 	if err := saveWatchlist(configPath, want); err != nil {
 		t.Fatal(err)
@@ -246,7 +251,7 @@ func TestWatchlistRoundTripsSortModeAndLoadsLegacyArrays(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got.Sort != want.Sort || got.ShowUTC != want.ShowUTC || len(got.Cities) != 1 || got.Cities[0] != want.Cities[0] || !reflect.DeepEqual(got.Columns, want.Columns) {
+	if got.Sort != want.Sort || got.ShowUTC != want.ShowUTC || got.TimezoneNameStyle != want.TimezoneNameStyle || got.DateFormat != want.DateFormat || got.TimeFormat != want.TimeFormat || len(got.Cities) != 1 || got.Cities[0] != want.Cities[0] || !reflect.DeepEqual(got.Columns, want.Columns) {
 		t.Fatalf("watchlist=%#v, want %#v", got, want)
 	}
 
@@ -262,14 +267,14 @@ func TestWatchlistRoundTripsSortModeAndLoadsLegacyArrays(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if legacy.Sort != sortNameAscending || legacy.ShowUTC || len(legacy.Cities) != 1 || !reflect.DeepEqual(legacy.Columns, defaultColumnPreferences()) {
+	if legacy.Sort != sortNameAscending || legacy.ShowUTC || legacy.TimezoneNameStyle != timezoneNameIANA || legacy.DateFormat != defaultDateLayout || legacy.TimeFormat != defaultTimeLayout || len(legacy.Cities) != 1 || !reflect.DeepEqual(legacy.Columns, defaultColumnPreferences()) {
 		t.Fatalf("legacy config=%#v, want name ascending default", legacy)
 	}
 	if err := os.WriteFile(configPath, []byte(`{"cities":[],"sort":"name_asc"}`), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	omitted, err := readWatchlist(configPath)
-	if err != nil || omitted.ShowUTC || !reflect.DeepEqual(omitted.Columns, defaultColumnPreferences()) {
+	if err != nil || omitted.ShowUTC || omitted.TimezoneNameStyle != timezoneNameIANA || omitted.DateFormat != defaultDateLayout || omitted.TimeFormat != defaultTimeLayout || !reflect.DeepEqual(omitted.Columns, defaultColumnPreferences()) {
 		t.Fatalf("watchlist omitted preferences=%#v err=%v, want current defaults", omitted, err)
 	}
 }
@@ -282,6 +287,7 @@ func TestColumnPreferencesNormalizeUnknownDuplicateAndMissingEntries(t *testing.
 		{ID: columnTime, Visible: false},
 	})
 	want := []columnPreference{
+		{ID: columnTimezone, Visible: true},
 		{ID: columnDaylight, Visible: false},
 		{ID: columnTime, Visible: false},
 		{ID: columnDay, Visible: true},
@@ -345,7 +351,7 @@ func TestManageColumnsScreenShowsFixedCityAndControls(t *testing.T) {
 	updated, _ := m.Update(tea.KeyPressMsg(tea.Key{Text: "c", Code: 'c'}))
 	columns := updated.(model)
 	view := columns.View().Content
-	for _, want := range []string{"Manage columns", "[x] City (fixed first)", "Daylight", "space", "toggle visibility", "move left", "move right", "reset columns"} {
+	for _, want := range []string{"Manage columns", "[x] City (fixed first)", "Time zone", "Daylight", "space", "toggle visibility", "move left", "move right", "reset columns"} {
 		if !strings.Contains(view, want) {
 			t.Errorf("column manager is missing %q", want)
 		}
@@ -373,8 +379,8 @@ func TestClockViewUsesConfiguredColumnOrderAndKeepsCityFirst(t *testing.T) {
 	if !(cityIndex >= 0 && cityIndex < daylightIndex && daylightIndex < dateIndex && dateIndex < utcOffsetIndex && utcOffsetIndex < dayIndex) {
 		t.Fatalf("header does not follow City plus configured order: %q", header)
 	}
-	if strings.Contains(header, "TIME") {
-		t.Fatalf("hidden Time column is still rendered: %q", header)
+	if strings.Count(header, "TIME") != 1 || !strings.Contains(header, "TIME ZONE") {
+		t.Fatalf("hidden Time column is still rendered or Time zone is missing: %q", header)
 	}
 	if !strings.Contains(view, "UTC") || !strings.Contains(view, "02 Jan 2026") {
 		t.Fatalf("UTC row did not use selected columns: %q", view)
@@ -391,10 +397,174 @@ func TestClockViewCanHideEveryOptionalColumn(t *testing.T) {
 	if !strings.Contains(header, "CITY") {
 		t.Fatalf("City column disappeared when optional columns were hidden: %q", header)
 	}
-	for _, hidden := range []string{"DAY", "DATE", "TIME", "UTC OFFSET", "DAYLIGHT"} {
+	for _, hidden := range []string{"DAY", "DATE", "TIME", "UTC OFFSET", "TIME ZONE", "DAYLIGHT"} {
 		if strings.Contains(header, hidden) {
 			t.Errorf("hidden column %q still appears in header %q", hidden, header)
 		}
+	}
+}
+
+func TestClockViewTimezoneColumnUsesConfiguredNamingStyle(t *testing.T) {
+	for _, test := range []struct {
+		name  string
+		now   time.Time
+		style timezoneNameStyle
+		want  string
+	}{
+		{name: "IANA identifier", now: time.Date(2026, time.January, 2, 12, 0, 0, 0, time.UTC), style: timezoneNameIANA, want: "Europe/Berlin"},
+		{name: "winter abbreviation", now: time.Date(2026, time.January, 2, 12, 0, 0, 0, time.UTC), style: timezoneNameAbbreviation, want: "CET"},
+		{name: "summer abbreviation", now: time.Date(2026, time.July, 2, 12, 0, 0, 0, time.UTC), style: timezoneNameAbbreviation, want: "CEST"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			m := testModel([]city{{Name: "Berlin", Timezone: "Europe/Berlin"}})
+			m.now = test.now
+			m.timezoneNameStyle = test.style
+			if _, err := time.LoadLocation(m.cities[0].Timezone); err != nil {
+				t.Fatal(err)
+			}
+			if !strings.Contains(m.View().Content, test.want) {
+				t.Fatalf("clock view does not contain timezone value %q: %q", test.want, m.View().Content)
+			}
+		})
+	}
+}
+
+func TestTimezoneDisplayReplacesUnderscoresAndSizesToDisplayedValues(t *testing.T) {
+	zoneID := "America/North_Dakota/Center"
+	localTime := time.Date(2026, time.January, 2, 12, 0, 0, 0, time.UTC)
+	if got := timezoneNameValue(zoneID, localTime, timezoneNameIANA); got != "America/North Dakota/Center" {
+		t.Fatalf("timezoneNameValue() = %q, want underscores replaced", got)
+	}
+	cities := []city{{Name: "Center", Timezone: zoneID}}
+	if got, want := timezoneColumnWidth(cities, localTime, timezoneNameIANA, false), len("America/North Dakota/Center"); got != want {
+		t.Fatalf("IANA timezone column width = %d, want longest value width %d", got, want)
+	}
+	if got, want := timezoneColumnWidth(cities, localTime, timezoneNameAbbreviation, false), len("TIME ZONE"); got != want {
+		t.Fatalf("abbreviation timezone column width = %d, want header width %d", got, want)
+	}
+}
+
+func TestDefaultTimezoneColumnPrecedesDaylight(t *testing.T) {
+	preferences := defaultColumnPreferences()
+	if len(preferences) < 2 || preferences[len(preferences)-2].ID != columnTimezone || preferences[len(preferences)-1].ID != columnDaylight {
+		t.Fatalf("default columns do not end with timezone then daylight: %#v", preferences)
+	}
+}
+
+func TestFormatScreenTimezoneNameStylePersists(t *testing.T) {
+	m := testModel([]city{{Name: "Berlin", Timezone: "Europe/Berlin"}})
+	m.configPath = filepath.Join(t.TempDir(), "cities.json")
+	m.columns = defaultColumnPreferences()
+	m.screen = formatScreen
+	m.selectedFormat = timezoneFormatSetting
+	m.selectedFormatOption = 0
+
+	updated, cmd := m.Update(tea.KeyPressMsg(tea.Key{Code: tea.KeyRight}))
+	current := updated.(model)
+	if current.timezoneNameStyle != timezoneNameAbbreviation || cmd == nil {
+		t.Fatalf("timezone style selection: style=%q cmd=%v", current.timezoneNameStyle, cmd != nil)
+	}
+	updated, _ = current.Update(cmd())
+	current = updated.(model)
+	loaded, err := readWatchlist(m.configPath)
+	if err != nil || loaded.TimezoneNameStyle != timezoneNameAbbreviation {
+		t.Fatalf("timezone naming style did not persist: style=%q err=%v", loaded.TimezoneNameStyle, err)
+	}
+}
+
+func TestFormatScreenShowsPresetExamplesAndTimezonePreviews(t *testing.T) {
+	m := testModel([]city{{Name: "Berlin", Timezone: "Europe/Berlin"}})
+	m.screen = formatScreen
+	m.selectedFormat = dateFormatSetting
+	m.selectedFormatOption = 0
+	view := m.View().Content
+	for _, want := range []string{
+		"Date format", "02 Jan 2006", "2006-01-02", "02/01/2006", "01/02/2006",
+		"Time format", "15:04:05", "15:04", "3:04:05 PM", "3:04 PM",
+		"Timezone name", "Europe/Berlin", "CET / CEST", "Date: Mon/Monday", "enter edit Custom",
+	} {
+		if !strings.Contains(view, want) {
+			t.Errorf("format screen is missing %q", want)
+		}
+	}
+	m.selectedFormat = timeFormatSetting
+	if !strings.Contains(m.View().Content, "Time: 15=24h") {
+		t.Fatal("format screen does not show time layout token guidance")
+	}
+}
+
+func TestFormatScreenSelectsAndPersistsPresetsAndCustomLayouts(t *testing.T) {
+	m := testModel([]city{{Name: "Berlin", Timezone: "Europe/Berlin"}})
+	m.configPath = filepath.Join(t.TempDir(), "cities.json")
+	m.screen = formatScreen
+	m.selectedFormat = dateFormatSetting
+	m.selectedFormatOption = 0
+
+	updated, cmd := m.Update(tea.KeyPressMsg(tea.Key{Code: tea.KeyRight}))
+	current := updated.(model)
+	if current.dateFormat != "2006-01-02" || cmd == nil {
+		t.Fatalf("selecting ISO date format: layout=%q cmd=%v", current.dateFormat, cmd != nil)
+	}
+	updated, _ = current.Update(cmd())
+	current = updated.(model)
+	loaded, err := readWatchlist(m.configPath)
+	if err != nil || loaded.DateFormat != "2006-01-02" {
+		t.Fatalf("preset date format did not persist: layout=%q err=%v", loaded.DateFormat, err)
+	}
+
+	current.selectedFormatOption = len(dateFormatOptions) - 1
+	updated, cmd = current.Update(tea.KeyPressMsg(tea.Key{Code: tea.KeyEnter}))
+	current = updated.(model)
+	if !current.formatEditing || cmd == nil {
+		t.Fatal("Enter on Custom did not start the custom layout editor")
+	}
+	current.formatInput.SetValue("Monday, 02 Jan")
+	updated, cmd = current.Update(tea.KeyPressMsg(tea.Key{Code: tea.KeyEnter}))
+	current = updated.(model)
+	if current.formatEditing || current.dateFormat != "Monday, 02 Jan" || cmd == nil {
+		t.Fatalf("custom date format was not accepted: editing=%t layout=%q cmd=%v", current.formatEditing, current.dateFormat, cmd != nil)
+	}
+	updated, _ = current.Update(cmd())
+	loaded, err = readWatchlist(m.configPath)
+	if err != nil || loaded.DateFormat != "Monday, 02 Jan" || loaded.TimeFormat != defaultTimeLayout {
+		t.Fatalf("custom format or defaults were not persisted: config=%#v err=%v", loaded, err)
+	}
+}
+
+func TestFormatEditorRejectsEmptyAndEscapeCancels(t *testing.T) {
+	m := testModel(nil)
+	m.screen = formatScreen
+	m.formatEditing = true
+	m.selectedFormat = timeFormatSetting
+	m.formatInput = textinput.New()
+	m.formatInput.Focus()
+	updated, cmd := m.Update(tea.KeyPressMsg(tea.Key{Code: tea.KeyEnter}))
+	current := updated.(model)
+	if !current.formatEditing || current.timeFormat != "" || cmd != nil || current.status != "Format cannot be empty" {
+		t.Fatal("empty custom format was not rejected")
+	}
+	updated, _ = current.Update(tea.KeyPressMsg(tea.Key{Code: tea.KeyEsc}))
+	current = updated.(model)
+	if current.formatEditing || current.screen != formatScreen {
+		t.Fatal("Escape did not cancel custom format editing")
+	}
+}
+
+func TestClockUsesSelectedDateAndTimeLayoutsInCompactView(t *testing.T) {
+	m := testModel([]city{{Name: "Berlin", Timezone: "Europe/Berlin"}})
+	m.now = time.Date(2026, time.January, 2, 12, 4, 5, 0, time.UTC)
+	m.dateFormat = "2006-01-02"
+	m.timeFormat = "3:04 PM"
+	m.showUTC = true
+	m.width = 65
+	columns := visibleClockColumns(m.columns)
+	_, _, compact := clockLayoutWidths(m.width-2, 6, columns)
+	if !compact {
+		t.Fatal("test setup did not produce a compact layout")
+	}
+	view := m.View().Content
+	if !strings.Contains(view, "2026-01-02") || !strings.Contains(view, "1:04 PM") || !strings.Contains(view, "12:04 PM") {
+		t.Fatalf("clock view did not preserve the selected formats in compact layout: %q", view)
 	}
 }
 
@@ -648,7 +818,7 @@ func TestViewRendersCityTimesAndInvalidZones(t *testing.T) {
 			t.Fatalf("rendered view does not contain %q", value)
 		}
 	}
-	if !strings.Contains(view, "Broken") || !strings.Contains(view, "invalid time zone") {
+	if !strings.Contains(view, "Broken") || !strings.Contains(view, "invalid") {
 		t.Fatal("rendered view does not report the invalid timezone")
 	}
 }
@@ -779,7 +949,7 @@ func TestCityClockShowsDaylightBarInBothLayouts(t *testing.T) {
 
 	m.width = 45
 	compact := m.View().Content
-	if !strings.Contains(compact, "DAYLIGHT") || !strings.Contains(compact, "Tokyo") || !strings.Contains(compact, "│") {
+	if !strings.Contains(compact, "Tokyo") || !strings.Contains(compact, "│") {
 		t.Fatalf("compact view is missing Tokyo's daylight timeline: %q", compact)
 	}
 	if !strings.Contains(compact, "\x1b[38;5;252;40mTokyo") {
@@ -1000,7 +1170,7 @@ func TestExpandedHelpMatchesActiveScreen(t *testing.T) {
 	clockModel.help.ShowAll = true
 
 	clockView := clockModel.View().Content
-	for _, want := range []string{"quit", "more help", "manage cities", "manage columns"} {
+	for _, want := range []string{"quit", "more help", "manage cities", "manage columns", "manage formats"} {
 		if !strings.Contains(clockView, want) {
 			t.Errorf("clock help is missing %q", want)
 		}
@@ -1044,7 +1214,7 @@ func TestExpandedHelpMatchesActiveScreen(t *testing.T) {
 			t.Errorf("management view is missing %q", want)
 		}
 	}
-	for _, want := range []string{"quit", "more help", "back", "add city", "remove city", "manage columns", "toggle UTC reference", "move up", "retry save", "cycle sort order"} {
+	for _, want := range []string{"quit", "more help", "back", "add city", "remove city", "manage columns", "manage formats", "toggle UTC reference", "move up", "retry save", "cycle sort order"} {
 		if !strings.Contains(manageView, want) {
 			t.Errorf("management help is missing %q", want)
 		}
@@ -1059,6 +1229,38 @@ func TestExpandedHelpMatchesActiveScreen(t *testing.T) {
 	clockModel = updated.(model)
 	if !strings.Contains(clockModel.View().Content, "manage cities") {
 		t.Fatal("clock help did not return after leaving city management")
+	}
+}
+
+func TestFormatScreenShortcutWorksFromClockAndCityManagement(t *testing.T) {
+	m := testModel(nil)
+	updated, _ := m.Update(tea.KeyPressMsg(tea.Key{Text: "f", Code: 'f'}))
+	if got := updated.(model).screen; got != formatScreen {
+		t.Fatalf("f from clock opened screen %d, want format screen", got)
+	}
+	m.screen = manageScreen
+	updated, _ = m.Update(tea.KeyPressMsg(tea.Key{Text: "f", Code: 'f'}))
+	if got := updated.(model).screen; got != formatScreen {
+		t.Fatalf("f from city management opened screen %d, want format screen", got)
+	}
+	m.screen = columnsScreen
+	updated, _ = m.Update(tea.KeyPressMsg(tea.Key{Text: "f", Code: 'f'}))
+	if got := updated.(model).screen; got != formatScreen {
+		t.Fatalf("f from columns opened screen %d, want format screen", got)
+	}
+	m.screen = formatScreen
+	updated, _ = m.Update(tea.KeyPressMsg(tea.Key{Text: "c", Code: 'c'}))
+	if got := updated.(model).screen; got != columnsScreen {
+		t.Fatalf("c from formats opened screen %d, want columns screen", got)
+	}
+	updated, _ = updated.(model).Update(tea.KeyPressMsg(tea.Key{Text: "m", Code: 'm'}))
+	if got := updated.(model).screen; got != manageScreen {
+		t.Fatalf("m from columns opened screen %d, want city management", got)
+	}
+	m.screen = formatScreen
+	updated, _ = m.Update(tea.KeyPressMsg(tea.Key{Text: "m", Code: 'm'}))
+	if got := updated.(model).screen; got != manageScreen {
+		t.Fatalf("m from formats opened screen %d, want city management", got)
 	}
 }
 

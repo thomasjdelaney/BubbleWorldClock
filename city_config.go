@@ -11,10 +11,13 @@ import (
 )
 
 type watchlistConfig struct {
-	Cities  []city             `json:"cities"`
-	Sort    sortMode           `json:"sort"`
-	ShowUTC bool               `json:"show_utc,omitempty"`
-	Columns []columnPreference `json:"columns,omitempty"`
+	Cities            []city             `json:"cities"`
+	Sort              sortMode           `json:"sort"`
+	ShowUTC           bool               `json:"show_utc,omitempty"`
+	Columns           []columnPreference `json:"columns,omitempty"`
+	TimezoneNameStyle timezoneNameStyle  `json:"timezone_name_style,omitempty"`
+	DateFormat        string             `json:"date_format,omitempty"`
+	TimeFormat        string             `json:"time_format,omitempty"`
 }
 
 func loadWatchlistConfig(configPath, legacyPath string, defaults []city) (watchlistConfig, error) {
@@ -37,7 +40,7 @@ func loadWatchlistConfig(configPath, legacyPath string, defaults []city) (watchl
 		return watchlistConfig{}, fmt.Errorf("load legacy city config: %w", err)
 	}
 
-	return watchlistConfig{Cities: append([]city(nil), defaults...), Sort: sortNameAscending, Columns: defaultColumnPreferences()}, nil
+	return watchlistConfig{Cities: append([]city(nil), defaults...), Sort: sortNameAscending, Columns: defaultColumnPreferences(), TimezoneNameStyle: timezoneNameIANA, DateFormat: defaultDateLayout, TimeFormat: defaultTimeLayout}, nil
 }
 
 func loadWatchlist(configPath, legacyPath string, defaults []city) ([]city, error) {
@@ -52,7 +55,7 @@ func readWatchlist(filename string) (watchlistConfig, error) {
 	}
 	var legacy []city
 	if err := json.Unmarshal(contents, &legacy); err == nil && legacy != nil {
-		return watchlistConfig{Cities: legacy, Sort: sortNameAscending, Columns: defaultColumnPreferences()}, nil
+		return watchlistConfig{Cities: legacy, Sort: sortNameAscending, Columns: defaultColumnPreferences(), TimezoneNameStyle: timezoneNameIANA, DateFormat: defaultDateLayout, TimeFormat: defaultTimeLayout}, nil
 	}
 	var config watchlistConfig
 	if err := json.Unmarshal(contents, &config); err != nil {
@@ -65,6 +68,11 @@ func readWatchlist(filename string) (watchlistConfig, error) {
 		config.Sort = sortNameAscending
 	}
 	config.Columns = normalizeColumnPreferences(config.Columns)
+	if !config.TimezoneNameStyle.valid() {
+		config.TimezoneNameStyle = timezoneNameIANA
+	}
+	config.DateFormat = normalizeDateLayout(config.DateFormat)
+	config.TimeFormat = normalizeTimeLayout(config.TimeFormat)
 	return config, nil
 }
 
@@ -78,6 +86,11 @@ func saveWatchlist(filename string, config watchlistConfig) error {
 		config.Sort = sortNameAscending
 	}
 	config.Columns = normalizeColumnPreferences(config.Columns)
+	if !config.TimezoneNameStyle.valid() {
+		config.TimezoneNameStyle = timezoneNameIANA
+	}
+	config.DateFormat = normalizeDateLayout(config.DateFormat)
+	config.TimeFormat = normalizeTimeLayout(config.TimeFormat)
 	directory := filepath.Dir(filename)
 	if err := os.MkdirAll(directory, 0o700); err != nil {
 		return err
@@ -121,10 +134,10 @@ type citySaveResultMsg struct {
 	err error
 }
 
-func saveCitiesCmd(filename string, cities []city, sortMode sortMode, showUTC bool, columns []columnPreference) tea.Cmd {
+func saveCitiesCmd(filename string, cities []city, sortMode sortMode, showUTC bool, columns []columnPreference, timezoneStyle timezoneNameStyle, dateFormat, timeFormat string) tea.Cmd {
 	snapshot := append([]city(nil), cities...)
 	columnSnapshot := append([]columnPreference(nil), columns...)
 	return func() tea.Msg {
-		return citySaveResultMsg{err: saveWatchlist(filename, watchlistConfig{Cities: snapshot, Sort: sortMode, ShowUTC: showUTC, Columns: columnSnapshot})}
+		return citySaveResultMsg{err: saveWatchlist(filename, watchlistConfig{Cities: snapshot, Sort: sortMode, ShowUTC: showUTC, Columns: columnSnapshot, TimezoneNameStyle: timezoneStyle, DateFormat: dateFormat, TimeFormat: timeFormat})}
 	}
 }

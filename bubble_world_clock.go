@@ -85,26 +85,31 @@ const (
 	manageScreen
 	pickerScreen
 	columnsScreen
+	formatScreen
 )
 
 type keyMap struct {
-	Quit            key.Binding
-	ToggleHelp      key.Binding
-	Manage          key.Binding
-	AddCity         key.Binding
-	RemoveCity      key.Binding
-	Back            key.Binding
-	CursorUp        key.Binding
-	CursorDown      key.Binding
-	ChooseCity      key.Binding
-	RetrySave       key.Binding
-	Sort            key.Binding
-	ToggleUTC       key.Binding
-	ManageColumns   key.Binding
-	ToggleColumn    key.Binding
-	MoveColumnLeft  key.Binding
-	MoveColumnRight key.Binding
-	ResetColumns    key.Binding
+	Quit                 key.Binding
+	ToggleHelp           key.Binding
+	Manage               key.Binding
+	AddCity              key.Binding
+	RemoveCity           key.Binding
+	Back                 key.Binding
+	CursorUp             key.Binding
+	CursorDown           key.Binding
+	ChooseCity           key.Binding
+	EditFormat           key.Binding
+	RetrySave            key.Binding
+	Sort                 key.Binding
+	ToggleUTC            key.Binding
+	ManageColumns        key.Binding
+	ManageFormats        key.Binding
+	ToggleColumn         key.Binding
+	MoveColumnLeft       key.Binding
+	MoveColumnRight      key.Binding
+	PreviousFormatOption key.Binding
+	NextFormatOption     key.Binding
+	ResetColumns         key.Binding
 }
 
 func newKeyMap() keyMap {
@@ -145,6 +150,10 @@ func newKeyMap() keyMap {
 			key.WithKeys("enter"),
 			key.WithHelp("enter", "choose city"),
 		),
+		EditFormat: key.NewBinding(
+			key.WithKeys("enter"),
+			key.WithHelp("enter", "edit custom format"),
+		),
 		RetrySave: key.NewBinding(
 			key.WithKeys("s"),
 			key.WithHelp("s", "retry save"),
@@ -161,6 +170,10 @@ func newKeyMap() keyMap {
 			key.WithKeys("c"),
 			key.WithHelp("c", "manage columns"),
 		),
+		ManageFormats: key.NewBinding(
+			key.WithKeys("f"),
+			key.WithHelp("f", "manage formats"),
+		),
 		ToggleColumn: key.NewBinding(
 			key.WithKeys("space"),
 			key.WithHelp("space", "toggle visibility"),
@@ -172,6 +185,14 @@ func newKeyMap() keyMap {
 		MoveColumnRight: key.NewBinding(
 			key.WithKeys("right"),
 			key.WithHelp("→", "move right"),
+		),
+		PreviousFormatOption: key.NewBinding(
+			key.WithKeys("left"),
+			key.WithHelp("←/→", "change option"),
+		),
+		NextFormatOption: key.NewBinding(
+			key.WithKeys("right"),
+			key.WithHelp("←/→", "change option"),
 		),
 		ResetColumns: key.NewBinding(
 			key.WithKeys("r"),
@@ -194,39 +215,52 @@ func (k screenHelpKeyMap) FullHelp() [][]key.Binding {
 	case manageScreen:
 		return [][]key.Binding{
 			{k.Quit, k.ToggleHelp, k.Back},
-			{k.AddCity, k.RemoveCity, k.ToggleUTC, k.ManageColumns},
+			{k.AddCity, k.RemoveCity, k.ToggleUTC, k.ManageColumns, k.ManageFormats},
 			{k.CursorUp, k.CursorDown, k.RetrySave, k.Sort},
 		}
 	case columnsScreen:
 		return [][]key.Binding{
 			{k.Quit, k.ToggleHelp, k.Back},
-			{k.CursorUp, k.CursorDown, k.ToggleColumn, k.MoveColumnLeft, k.MoveColumnRight},
+			{k.CursorUp, k.CursorDown, k.ToggleColumn, k.MoveColumnLeft, k.MoveColumnRight, k.Manage, k.ManageFormats},
 			{k.ResetColumns, k.RetrySave},
 		}
+	case formatScreen:
+		return [][]key.Binding{
+			{k.Quit, k.ToggleHelp, k.Back},
+			{k.CursorUp, k.CursorDown, k.PreviousFormatOption, k.EditFormat, k.Manage, k.ManageColumns},
+			{k.RetrySave},
+		}
 	default:
-		return [][]key.Binding{{k.Quit, k.ToggleHelp, k.Manage, k.ManageColumns}}
+		return [][]key.Binding{{k.Quit, k.ToggleHelp, k.Manage, k.ManageColumns, k.ManageFormats}}
 	}
 }
 
 type model struct {
-	cities         []city
-	catalog        []cityRecord
-	picker         list.Model
-	screen         screen
-	selected       int
-	configPath     string
-	sortMode       sortMode
-	showUTC        bool
-	columns        []columnPreference
-	selectedColumn int
-	status         string
-	saving         bool
-	unsaved        bool
-	now            time.Time
-	width          int
-	height         int
-	help           help.Model
-	keys           keyMap
+	cities               []city
+	catalog              []cityRecord
+	picker               list.Model
+	screen               screen
+	selected             int
+	configPath           string
+	sortMode             sortMode
+	showUTC              bool
+	columns              []columnPreference
+	timezoneNameStyle    timezoneNameStyle
+	dateFormat           string
+	timeFormat           string
+	selectedColumn       int
+	selectedFormat       formatSetting
+	selectedFormatOption int
+	formatEditing        bool
+	formatInput          textinput.Model
+	status               string
+	saving               bool
+	unsaved              bool
+	now                  time.Time
+	width                int
+	height               int
+	help                 help.Model
+	keys                 keyMap
 }
 
 func (m model) Init() tea.Cmd {
@@ -241,6 +275,9 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.help.SetWidth(msg.Width)
 		if m.screen == pickerScreen {
 			m.picker.SetSize(msg.Width, max(1, msg.Height-6))
+		}
+		if m.formatEditing {
+			m.formatInput.SetWidth(max(1, msg.Width-8))
 		}
 		return m, nil
 	case tea.KeyPressMsg:
@@ -263,6 +300,11 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	if m.screen == pickerScreen {
 		var cmd tea.Cmd
 		m.picker, cmd = m.picker.Update(msg)
+		return m, cmd
+	}
+	if m.screen == formatScreen && m.formatEditing {
+		var cmd tea.Cmd
+		m.formatInput, cmd = m.formatInput.Update(msg)
 		return m, cmd
 	}
 
@@ -317,6 +359,8 @@ func (m model) updateKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 			return m.openPicker()
 		case key.Matches(msg, m.keys.ManageColumns):
 			m = m.openColumns()
+		case key.Matches(msg, m.keys.ManageFormats):
+			m = m.openFormats()
 		case key.Matches(msg, m.keys.RemoveCity):
 			return m.removeCity()
 		case key.Matches(msg, m.keys.CursorUp):
@@ -345,6 +389,8 @@ func (m model) updateKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 
 	case columnsScreen:
 		return m.updateColumnKey(msg)
+	case formatScreen:
+		return m.updateFormatKey(msg)
 
 	default:
 		switch {
@@ -357,6 +403,8 @@ func (m model) updateKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 			m.status = ""
 		case key.Matches(msg, m.keys.ManageColumns):
 			m = m.openColumns()
+		case key.Matches(msg, m.keys.ManageFormats):
+			m = m.openFormats()
 		}
 		return m, nil
 	}
@@ -370,6 +418,144 @@ func (m model) openColumns() model {
 	return m
 }
 
+func (m model) openFormats() model {
+	m.screen = formatScreen
+	m.selectedFormat = dateFormatSetting
+	m.selectedFormatOption = formatOptionIndex(normalizeDateLayout(m.dateFormat), dateFormatOptions)
+	m.status = ""
+	return m
+}
+
+func (m model) currentFormatLayout(setting formatSetting) string {
+	switch setting {
+	case dateFormatSetting:
+		return normalizeDateLayout(m.dateFormat)
+	case timeFormatSetting:
+		return normalizeTimeLayout(m.timeFormat)
+	default:
+		return ""
+	}
+}
+
+func (m *model) setFormatLayout(setting formatSetting, layout string) {
+	if setting == dateFormatSetting {
+		m.dateFormat = layout
+	} else if setting == timeFormatSetting {
+		m.timeFormat = layout
+	}
+}
+
+func (m model) updateFormatKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
+	if m.formatEditing {
+		switch {
+		case key.Matches(msg, m.keys.Back):
+			m.formatEditing = false
+			m.formatInput.Blur()
+			m.status = ""
+			return m, nil
+		case key.Matches(msg, m.keys.EditFormat):
+			if m.saving {
+				m.status = "Wait for the current save to finish"
+				return m, nil
+			}
+			layout := strings.TrimSpace(m.formatInput.Value())
+			if layout == "" {
+				m.status = "Format cannot be empty"
+				return m, nil
+			}
+			m.setFormatLayout(m.selectedFormat, m.formatInput.Value())
+			m.formatEditing = false
+			m.formatInput.Blur()
+			m.status = ""
+			return m, m.startSave()
+		default:
+			var cmd tea.Cmd
+			m.formatInput, cmd = m.formatInput.Update(msg)
+			return m, cmd
+		}
+	}
+
+	switch {
+	case key.Matches(msg, m.keys.Quit):
+		return m, tea.Quit
+	case key.Matches(msg, m.keys.ToggleHelp):
+		m.help.ShowAll = !m.help.ShowAll
+	case key.Matches(msg, m.keys.Back):
+		m.screen = clockScreen
+		m.status = ""
+	case key.Matches(msg, m.keys.Manage):
+		m.screen = manageScreen
+		m.status = ""
+	case key.Matches(msg, m.keys.ManageColumns):
+		m = m.openColumns()
+	case key.Matches(msg, m.keys.RetrySave) && m.unsaved && !m.saving:
+		return m, m.startSave()
+	case key.Matches(msg, m.keys.CursorUp):
+		if m.selectedFormat > dateFormatSetting {
+			m.selectedFormat--
+			m.selectedFormatOption = m.currentFormatOptionIndex(m.selectedFormat)
+		}
+	case key.Matches(msg, m.keys.CursorDown):
+		if m.selectedFormat < timezoneFormatSetting {
+			m.selectedFormat++
+			m.selectedFormatOption = m.currentFormatOptionIndex(m.selectedFormat)
+		}
+	case key.Matches(msg, m.keys.PreviousFormatOption), key.Matches(msg, m.keys.NextFormatOption):
+		if m.saving {
+			m.status = "Wait for the current save to finish"
+			return m, nil
+		}
+		options := formatOptionsFor(m.selectedFormat)
+		direction := -1
+		if key.Matches(msg, m.keys.NextFormatOption) {
+			direction = 1
+		}
+		m.selectedFormatOption = (m.selectedFormatOption + direction + len(options)) % len(options)
+		if m.selectedFormat == timezoneFormatSetting {
+			if m.selectedFormatOption == 0 {
+				m.timezoneNameStyle = timezoneNameIANA
+			} else {
+				m.timezoneNameStyle = timezoneNameAbbreviation
+			}
+			return m, m.startSave()
+		}
+		if layout := options[m.selectedFormatOption].Layout; layout != "" {
+			m.setFormatLayout(m.selectedFormat, layout)
+			return m, m.startSave()
+		}
+	case key.Matches(msg, m.keys.EditFormat):
+		if m.selectedFormat == dateFormatSetting || m.selectedFormat == timeFormatSetting {
+			options := formatOptionsFor(m.selectedFormat)
+			if m.selectedFormatOption == len(options)-1 {
+				if m.saving {
+					m.status = "Wait for the current save to finish"
+					return m, nil
+				}
+				m.formatInput = textinput.New()
+				m.formatInput.Prompt = "Go layout: "
+				m.formatInput.CharLimit = 128
+				m.formatInput.SetWidth(max(20, m.width-8))
+				m.formatInput.SetValue(m.currentFormatLayout(m.selectedFormat))
+				cmd := m.formatInput.Focus()
+				m.formatEditing = true
+				m.status = ""
+				return m, cmd
+			}
+		}
+	}
+	return m, nil
+}
+
+func (m model) currentFormatOptionIndex(setting formatSetting) int {
+	if setting == timezoneFormatSetting {
+		if m.timezoneNameStyle == timezoneNameAbbreviation {
+			return 1
+		}
+		return 0
+	}
+	return formatOptionIndex(m.currentFormatLayout(setting), formatOptionsFor(setting))
+}
+
 func (m model) updateColumnKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	switch {
 	case key.Matches(msg, m.keys.Quit):
@@ -379,6 +565,11 @@ func (m model) updateColumnKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	case key.Matches(msg, m.keys.Back):
 		m.screen = clockScreen
 		m.status = ""
+	case key.Matches(msg, m.keys.Manage):
+		m.screen = manageScreen
+		m.status = ""
+	case key.Matches(msg, m.keys.ManageFormats):
+		m = m.openFormats()
 	case key.Matches(msg, m.keys.CursorUp):
 		if m.selectedColumn > 0 {
 			m.selectedColumn--
@@ -516,7 +707,7 @@ func (m *model) startSave() tea.Cmd {
 	m.saving = true
 	m.unsaved = true
 	m.status = "Saving changes..."
-	return saveCitiesCmd(m.configPath, m.cities, m.sortMode, m.showUTC, m.columns)
+	return saveCitiesCmd(m.configPath, m.cities, m.sortMode, m.showUTC, m.columns, m.timezoneNameStyle, m.dateFormat, m.timeFormat)
 }
 
 func cityIdentity(value city) string {
@@ -634,15 +825,18 @@ func main() {
 	}
 
 	app := model{
-		cities:     watchlist.Cities,
-		catalog:    catalog,
-		configPath: configPath,
-		sortMode:   watchlist.Sort,
-		showUTC:    watchlist.ShowUTC,
-		columns:    watchlist.Columns,
-		now:        time.Now(),
-		help:       help.New(),
-		keys:       newKeyMap(),
+		cities:            watchlist.Cities,
+		catalog:           catalog,
+		configPath:        configPath,
+		sortMode:          watchlist.Sort,
+		showUTC:           watchlist.ShowUTC,
+		columns:           watchlist.Columns,
+		timezoneNameStyle: watchlist.TimezoneNameStyle,
+		dateFormat:        watchlist.DateFormat,
+		timeFormat:        watchlist.TimeFormat,
+		now:               time.Now(),
+		help:              help.New(),
+		keys:              newKeyMap(),
 	}
 	app.sortCitiesPreservingSelection()
 	if _, err := tea.NewProgram(app).Run(); err != nil {

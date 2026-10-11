@@ -12,13 +12,14 @@ Run `bubble-world-clock` (or `bubble-world-clock.exe` on Windows).
 
 - `bubble-world-clock update`: check GitHub for a newer release and install it in place when available.
 - `bubble-world-clock version`: print the installed version.
-- On the clock screen, `m` opens city management, `c` opens column settings, `?` shows help, and `q` or `Ctrl+C` quits.
-- In city management, `a` adds a city, `d` removes the selected city, `o` cycles the sort order, and `u` toggles the UTC reference row. UTC is off by default and follows the active sort order when enabled. Use the arrow keys or `j`/`k` to move the selection.
-- In column settings, use up/down to select a column, Space to show or hide it, left/right to reorder it, and `r` to restore defaults. City stays first and visible. Press Esc to return to the clock screen. Column settings are also available from city management with `c`.
+- On the clock screen, `m` opens city management, `c` opens column settings, `f` opens date, time, and timezone formats, `?` shows help, and `q` or `Ctrl+C` quits.
+- In city management, `a` adds a city, `d` removes the selected city, `o` cycles the sort order, and `u` toggles the UTC reference row. UTC is off by default and follows the active sort order when enabled. Use `c` for columns, `f` for formats, and the arrow keys or `j`/`k` to move the selection.
+- In column settings, use up/down to select a column, Space to show or hide it, left/right to reorder it, and `r` to restore defaults. City stays first and visible. Press `m` for city management, `f` for formats, or Esc to return to the clock screen.
+- In format settings, use up/down to choose date, time, or timezone names; left/right to choose a format; and Enter on Custom to edit a Go time layout. Go layouts use the reference `Mon Jan 2 15:04:05 MST 2006`; the screen explains the date/time tokens and previews each choice. Press `m` for city management, `c` for columns, or Esc to return to the clock screen. IANA timezone IDs display underscores as spaces; local abbreviations vary with the date.
 - In the city picker, type a city name to search, or use `country:Japan` or `tz:Paris` to filter by country or timezone. Press `Enter` to add a city and `Esc` to return to management.
 - If saving fails, press `s` to retry.
 
-Your city list, sort order, UTC setting, and column preferences are saved in the operating system's user config directory under `BubbleWorldClock/cities.json`. The offline city catalog is derived from GeoNames `cities15000` under CC BY 4.0; see [data/README.md](data/README.md) for attribution.
+Your city list, sort order, UTC setting, column preferences, and display formats are saved in the operating system's user config directory under `BubbleWorldClock/cities.json`. The offline city catalog is derived from GeoNames `cities15000` under CC BY 4.0; see [data/README.md](data/README.md) for attribution.
 
 ## Install
 

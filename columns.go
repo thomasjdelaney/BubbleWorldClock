@@ -7,8 +7,20 @@ const (
 	columnDate      columnID = "date"
 	columnTime      columnID = "time"
 	columnUTCOffset columnID = "utc_offset"
+	columnTimezone  columnID = "timezone"
 	columnDaylight  columnID = "daylight"
 )
+
+type timezoneNameStyle string
+
+const (
+	timezoneNameIANA         timezoneNameStyle = "iana"
+	timezoneNameAbbreviation timezoneNameStyle = "abbreviation"
+)
+
+func (style timezoneNameStyle) valid() bool {
+	return style == timezoneNameIANA || style == timezoneNameAbbreviation
+}
 
 type columnPreference struct {
 	ID      columnID `json:"id"`
@@ -30,6 +42,7 @@ func defaultColumnPreferences() []columnPreference {
 		{ID: columnDate, Visible: true},
 		{ID: columnTime, Visible: true},
 		{ID: columnUTCOffset, Visible: true},
+		{ID: columnTimezone, Visible: true},
 		{ID: columnDaylight, Visible: true},
 	}
 }
@@ -55,6 +68,19 @@ func normalizeColumnPreferences(preferences []columnPreference) []columnPreferen
 	}
 	for _, preference := range defaults {
 		if !seen[preference.ID] {
+			if preference.ID == columnTimezone {
+				daylightIndex := len(result)
+				for index, existing := range result {
+					if existing.ID == columnDaylight {
+						daylightIndex = index
+						break
+					}
+				}
+				result = append(result, columnPreference{})
+				copy(result[daylightIndex+1:], result[daylightIndex:])
+				result[daylightIndex] = preference
+				continue
+			}
 			result = append(result, preference)
 		}
 	}
@@ -81,6 +107,8 @@ func clockColumnFor(id columnID) clockColumn {
 		return clockColumn{ID: id, Label: "TIME", Name: "Time", Width: len("15:04:05")}
 	case columnUTCOffset:
 		return clockColumn{ID: id, Label: "UTC OFFSET", Name: "UTC offset", Width: len("UTC OFFSET")}
+	case columnTimezone:
+		return clockColumn{ID: id, Label: "TIME ZONE", Name: "Time zone", Width: len("TIME ZONE")}
 	case columnDaylight:
 		return clockColumn{ID: id, Label: "DAYLIGHT", Name: "Daylight", Width: len("DAYLIGHT"), Flexible: true, MaxWidth: 48}
 	default:
