@@ -1,6 +1,6 @@
 # Bubble World Clock
 
-A terminal world clock built with [Bubble Tea](https://github.com/charmbracelet/bubbletea). Track local dates, times, and UTC offsets for cities from a bundled offline catalog.
+A terminal world clock built with [Bubble Tea](https://github.com/charmbracelet/bubbletea), [Bubbles](https://github.com/charmbracelet/bubbles), and [Lip Gloss](https://github.com/charmbracelet/lipgloss). Bubble Tea runs the interface, Bubbles provides interactive components, and Lip Gloss styles the terminal display. Track local dates, times, and UTC offsets for cities from a bundled offline catalog.
 
 Each clock row can include a daylight timeline. Choose a calendar-day view, where daylight stays in place and the now marker moves across the reference city's local day, or a rolling 24-hour view, where the timeline moves beneath a fixed center marker. The legend identifies the reference city.
 
