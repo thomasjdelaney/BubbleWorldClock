@@ -6,8 +6,6 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"sort"
-	"strings"
 	"time"
 
 	_ "time/tzdata"
@@ -96,6 +94,11 @@ const (
 	daylightTimezonePicker
 )
 
+const (
+	daylightModeSetting = iota
+	daylightReferenceSetting
+)
+
 type keyMap struct {
 	Quit                 key.Binding
 	ToggleHelp           key.Binding
@@ -120,6 +123,7 @@ type keyMap struct {
 	ResetColumns         key.Binding
 	DaylightSettings     key.Binding
 	ChangeDaylightZone   key.Binding
+	CycleDaylightMode    key.Binding
 }
 
 func newKeyMap() keyMap {
@@ -216,6 +220,10 @@ func newKeyMap() keyMap {
 			key.WithKeys("c"),
 			key.WithHelp("c", "change time zone"),
 		),
+		CycleDaylightMode: key.NewBinding(
+			key.WithKeys("left", "right"),
+			key.WithHelp("←/→", "change timeline mode"),
+		),
 	}
 }
 
@@ -249,42 +257,48 @@ func (k screenHelpKeyMap) FullHelp() [][]key.Binding {
 			{k.RetrySave},
 		}
 	case daylightScreen:
-		return [][]key.Binding{{k.Quit, k.ToggleHelp, k.Back, k.ChangeDaylightZone, k.RetrySave}}
+		return [][]key.Binding{
+			{k.Quit, k.ToggleHelp, k.Back},
+			{k.CursorUp, k.CursorDown, k.CycleDaylightMode, k.ChangeDaylightZone},
+			{k.RetrySave},
+		}
 	default:
 		return [][]key.Binding{{k.Quit, k.ToggleHelp, k.Manage, k.ManageColumns, k.ManageFormats}}
 	}
 }
 
 type model struct {
-	cities               []city
-	catalog              []cityRecord
-	picker               list.Model
-	pickerPurpose        pickerPurpose
-	pickerReturnScreen   screen
-	screen               screen
-	selected             int
-	configPath           string
-	sortMode             sortMode
-	showUTC              bool
-	daylightTimezone     string
-	daylightCityName     string
-	columns              []columnPreference
-	timezoneNameStyle    timezoneNameStyle
-	dateFormat           string
-	timeFormat           string
-	selectedColumn       int
-	selectedFormat       formatSetting
-	selectedFormatOption int
-	formatEditing        bool
-	formatInput          textinput.Model
-	status               string
-	saving               bool
-	unsaved              bool
-	now                  time.Time
-	width                int
-	height               int
-	help                 help.Model
-	keys                 keyMap
+	cities                  []city
+	catalog                 []cityRecord
+	picker                  list.Model
+	pickerPurpose           pickerPurpose
+	pickerReturnScreen      screen
+	screen                  screen
+	selected                int
+	configPath              string
+	sortMode                sortMode
+	showUTC                 bool
+	daylightTimezone        string
+	daylightCityName        string
+	daylightMode            daylightMode
+	selectedDaylightSetting int
+	columns                 []columnPreference
+	timezoneNameStyle       timezoneNameStyle
+	dateFormat              string
+	timeFormat              string
+	selectedColumn          int
+	selectedFormat          formatSetting
+	selectedFormatOption    int
+	formatEditing           bool
+	formatInput             textinput.Model
+	status                  string
+	saving                  bool
+	unsaved                 bool
+	now                     time.Time
+	width                   int
+	height                  int
+	help                    help.Model
+	keys                    keyMap
 }
 
 func (m model) Init() tea.Cmd {
@@ -439,433 +453,22 @@ func (m model) updateKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	}
 }
 
-func (m model) openColumns() model {
-	m.screen = columnsScreen
-	m.columns = normalizeColumnPreferences(m.columns)
-	m.selectedColumn = 0
-	m.status = ""
-	return m
-}
-
-func (m model) openFormats() model {
-	m.screen = formatScreen
-	m.selectedFormat = dateFormatSetting
-	m.selectedFormatOption = formatOptionIndex(normalizeDateLayout(m.dateFormat), dateFormatOptions)
-	m.status = ""
-	return m
-}
-
-func (m model) currentFormatLayout(setting formatSetting) string {
-	switch setting {
-	case dateFormatSetting:
-		return normalizeDateLayout(m.dateFormat)
-	case timeFormatSetting:
-		return normalizeTimeLayout(m.timeFormat)
-	default:
-		return ""
-	}
-}
-
-func (m *model) setFormatLayout(setting formatSetting, layout string) {
-	if setting == dateFormatSetting {
-		m.dateFormat = layout
-	} else if setting == timeFormatSetting {
-		m.timeFormat = layout
-	}
-}
-
-func (m model) updateFormatKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
-	if m.formatEditing {
-		switch {
-		case key.Matches(msg, m.keys.Back):
-			m.formatEditing = false
-			m.formatInput.Blur()
-			m.status = ""
-			return m, nil
-		case key.Matches(msg, m.keys.EditFormat):
-			if m.saving {
-				m.status = "Wait for the current save to finish"
-				return m, nil
-			}
-			layout := strings.TrimSpace(m.formatInput.Value())
-			if layout == "" {
-				m.status = "Format cannot be empty"
-				return m, nil
-			}
-			m.setFormatLayout(m.selectedFormat, m.formatInput.Value())
-			m.formatEditing = false
-			m.formatInput.Blur()
-			m.status = ""
-			return m, m.startSave()
-		default:
-			var cmd tea.Cmd
-			m.formatInput, cmd = m.formatInput.Update(msg)
-			return m, cmd
-		}
-	}
-
-	switch {
-	case key.Matches(msg, m.keys.Quit):
-		return m, tea.Quit
-	case key.Matches(msg, m.keys.ToggleHelp):
-		m.help.ShowAll = !m.help.ShowAll
-	case key.Matches(msg, m.keys.Back):
-		m.screen = clockScreen
-		m.status = ""
-	case key.Matches(msg, m.keys.Manage):
-		m.screen = manageScreen
-		m.status = ""
-	case key.Matches(msg, m.keys.ManageColumns):
-		m = m.openColumns()
-	case key.Matches(msg, m.keys.RetrySave) && m.unsaved && !m.saving:
-		return m, m.startSave()
-	case key.Matches(msg, m.keys.CursorUp):
-		if m.selectedFormat > dateFormatSetting {
-			m.selectedFormat--
-			m.selectedFormatOption = m.currentFormatOptionIndex(m.selectedFormat)
-		}
-	case key.Matches(msg, m.keys.CursorDown):
-		if m.selectedFormat < timezoneFormatSetting {
-			m.selectedFormat++
-			m.selectedFormatOption = m.currentFormatOptionIndex(m.selectedFormat)
-		}
-	case key.Matches(msg, m.keys.PreviousFormatOption), key.Matches(msg, m.keys.NextFormatOption):
-		if m.saving {
-			m.status = "Wait for the current save to finish"
-			return m, nil
-		}
-		options := formatOptionsFor(m.selectedFormat)
-		direction := -1
-		if key.Matches(msg, m.keys.NextFormatOption) {
-			direction = 1
-		}
-		m.selectedFormatOption = (m.selectedFormatOption + direction + len(options)) % len(options)
-		if m.selectedFormat == timezoneFormatSetting {
-			if m.selectedFormatOption == 0 {
-				m.timezoneNameStyle = timezoneNameIANA
-			} else {
-				m.timezoneNameStyle = timezoneNameAbbreviation
-			}
-			return m, m.startSave()
-		}
-		if layout := options[m.selectedFormatOption].Layout; layout != "" {
-			m.setFormatLayout(m.selectedFormat, layout)
-			return m, m.startSave()
-		}
-	case key.Matches(msg, m.keys.EditFormat):
-		if m.selectedFormat == dateFormatSetting || m.selectedFormat == timeFormatSetting {
-			options := formatOptionsFor(m.selectedFormat)
-			if m.selectedFormatOption == len(options)-1 {
-				if m.saving {
-					m.status = "Wait for the current save to finish"
-					return m, nil
-				}
-				m.formatInput = textinput.New()
-				m.formatInput.Prompt = "Go layout: "
-				m.formatInput.CharLimit = 128
-				m.formatInput.SetWidth(max(20, m.width-8))
-				m.formatInput.SetValue(m.currentFormatLayout(m.selectedFormat))
-				cmd := m.formatInput.Focus()
-				m.formatEditing = true
-				m.status = ""
-				return m, cmd
-			}
-		}
-	}
-	return m, nil
-}
-
-func (m model) currentFormatOptionIndex(setting formatSetting) int {
-	if setting == timezoneFormatSetting {
-		if m.timezoneNameStyle == timezoneNameAbbreviation {
-			return 1
-		}
-		return 0
-	}
-	return formatOptionIndex(m.currentFormatLayout(setting), formatOptionsFor(setting))
-}
-
-func (m model) updateColumnKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
-	switch {
-	case key.Matches(msg, m.keys.Quit):
-		return m, tea.Quit
-	case key.Matches(msg, m.keys.ToggleHelp):
-		m.help.ShowAll = !m.help.ShowAll
-	case key.Matches(msg, m.keys.Back):
-		m.screen = clockScreen
-		m.status = ""
-	case key.Matches(msg, m.keys.Manage):
-		m.screen = manageScreen
-		m.status = ""
-	case key.Matches(msg, m.keys.ManageFormats):
-		m = m.openFormats()
-	case key.Matches(msg, m.keys.DaylightSettings):
-		m = m.openDaylightSettings()
-	case key.Matches(msg, m.keys.CursorUp):
-		if m.selectedColumn > 0 {
-			m.selectedColumn--
-		}
-	case key.Matches(msg, m.keys.CursorDown):
-		if m.selectedColumn < len(m.columns)-1 {
-			m.selectedColumn++
-		}
-	case key.Matches(msg, m.keys.RetrySave) && m.unsaved && !m.saving:
-		return m, m.startSave()
-	case key.Matches(msg, m.keys.ResetColumns):
-		if m.saving {
-			m.status = "Wait for the current save to finish"
-			return m, nil
-		}
-		m.columns = defaultColumnPreferences()
-		m.selectedColumn = 0
-		return m, m.startSave()
-	case key.Matches(msg, m.keys.ToggleColumn):
-		if m.saving {
-			m.status = "Wait for the current save to finish"
-			return m, nil
-		}
-		if m.selectedColumn >= 0 && m.selectedColumn < len(m.columns) {
-			m.columns[m.selectedColumn].Visible = !m.columns[m.selectedColumn].Visible
-			return m, m.startSave()
-		}
-	case key.Matches(msg, m.keys.MoveColumnLeft), key.Matches(msg, m.keys.MoveColumnRight):
-		if m.saving {
-			m.status = "Wait for the current save to finish"
-			return m, nil
-		}
-		direction := -1
-		if key.Matches(msg, m.keys.MoveColumnRight) {
-			direction = 1
-		}
-		previousSelection := m.selectedColumn
-		m.columns, m.selectedColumn = moveColumnPreference(m.columns, m.selectedColumn, direction)
-		if previousSelection == m.selectedColumn {
-			return m, nil
-		}
-		return m, m.startSave()
-	}
-	return m, nil
-}
-
-func (m model) openPicker() (tea.Model, tea.Cmd) {
-	return m.openCityPicker(addCityPicker, manageScreen)
-}
-
-func (m model) openDaylightPicker() (tea.Model, tea.Cmd) {
-	return m.openCityPicker(daylightTimezonePicker, daylightScreen)
-}
-
-func (m model) openCityPicker(purpose pickerPurpose, returnScreen screen) (tea.Model, tea.Cmd) {
-	items := make([]list.Item, len(m.catalog))
-	for i, record := range m.catalog {
-		items[i] = record
-	}
-	delegate := list.NewDefaultDelegate()
-	delegate.ShowDescription = true
-	m.picker = list.New(items, delegate, max(1, m.width), max(1, m.height-6))
-	m.picker.Filter = cityFilter
-	if purpose == daylightTimezonePicker {
-		m.picker.Title = "Choose a city time zone"
-	} else {
-		m.picker.Title = "Add a city"
-	}
-	m.picker.SetShowHelp(false)
-	m.picker.SetStatusBarItemName("city", "cities")
-	m.picker.DisableQuitKeybindings()
-	m.picker.SetFilterText("")
-	m.picker.SetFilterState(list.Filtering)
-	m.pickerPurpose = purpose
-	m.pickerReturnScreen = returnScreen
-	m.screen = pickerScreen
-	m.status = ""
-	return m, textinput.Blink
-}
-
-func (m model) openDaylightSettings() model {
-	m.screen = daylightScreen
-	m.status = ""
-	return m
-}
-
-func (m model) updateDaylightKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
-	switch {
-	case key.Matches(msg, m.keys.Quit):
-		return m, tea.Quit
-	case key.Matches(msg, m.keys.ToggleHelp):
-		m.help.ShowAll = !m.help.ShowAll
-	case key.Matches(msg, m.keys.Back):
-		m.screen = columnsScreen
-		m.status = ""
-	case key.Matches(msg, m.keys.ChangeDaylightZone):
-		if m.saving {
-			m.status = "Wait for the current save to finish"
-			return m, nil
-		}
-		return m.openDaylightPicker()
-	case key.Matches(msg, m.keys.RetrySave) && m.unsaved && !m.saving:
-		return m, m.startSave()
-	}
-	return m, nil
-}
-
-func (m model) setDaylightReference(record cityRecord) (tea.Model, tea.Cmd) {
-	if m.saving {
-		m.screen = daylightScreen
-		m.status = "Wait for the current save to finish"
-		return m, nil
-	}
-	if _, err := time.LoadLocation(record.Timezone); err != nil {
-		m.screen = daylightScreen
-		m.status = "Catalog timezone is invalid: " + record.Timezone
-		return m, nil
-	}
-	m.daylightTimezone = record.Timezone
-	m.daylightCityName = record.Name
-	m.screen = daylightScreen
-	return m, m.startSave()
-}
-
-func (m model) addCity(record cityRecord) (tea.Model, tea.Cmd) {
-	if m.saving {
-		m.status = "Wait for the current save to finish"
-		return m, nil
-	}
-	if _, err := time.LoadLocation(record.Timezone); err != nil {
-		m.status = "Catalog timezone is invalid: " + record.Timezone
-		return m, nil
-	}
-	newCity := city{
-		GeoNameID:   record.GeoNameID,
-		Name:        record.Name,
-		CountryCode: record.CountryCode,
-		Country:     record.Country,
-		Admin1Code:  record.Admin1Code,
-		Region:      record.Region,
-		Timezone:    record.Timezone,
-	}
-	for _, existing := range m.cities {
-		if sameCity(existing, newCity) {
-			m.screen = manageScreen
-			m.status = "That city is already on the clock"
-			return m, nil
-		}
-	}
-	m.cities = append(m.cities, newCity)
-	m.selected = len(m.cities) - 1
-	m.sortCitiesPreservingSelection()
-	m.screen = manageScreen
-	return m, m.startSave()
-}
-
-func cityRecordIdentity(value cityRecord) string {
-	if value.GeoNameID != 0 {
-		return fmt.Sprintf("id:%d", value.GeoNameID)
-	}
-	return "city:" + strings.ToLower(value.Name) + "\x00" + strings.ToLower(value.Country) + "\x00" + value.Timezone
-}
-
-func sameCity(first, second city) bool {
-	if first.GeoNameID != 0 && second.GeoNameID != 0 {
-		return first.GeoNameID == second.GeoNameID
-	}
-	return strings.EqualFold(first.Name, second.Name) && first.Timezone == second.Timezone
-}
-
-func (m model) removeCity() (tea.Model, tea.Cmd) {
-	if m.saving {
-		m.status = "Wait for the current save to finish"
-		return m, nil
-	}
-	if len(m.cities) == 0 {
-		m.status = "No cities to remove"
-		return m, nil
-	}
-	m.cities = append(m.cities[:m.selected], m.cities[m.selected+1:]...)
-	if len(m.cities) > 0 {
-		m.selected = min(m.selected, len(m.cities)-1)
-	} else {
-		m.selected = 0
-	}
-	if m.selected >= len(m.cities) {
-		m.selected = max(0, len(m.cities)-1)
-	}
-	return m, m.startSave()
-}
-
 func (m *model) startSave() tea.Cmd {
 	m.saving = true
 	m.unsaved = true
 	m.status = "Saving changes..."
-	return saveCitiesCmd(m.configPath, m.cities, m.sortMode, m.showUTC, m.daylightTimezone, m.daylightCityName, m.columns, m.timezoneNameStyle, m.dateFormat, m.timeFormat)
-}
-
-func cityIdentity(value city) string {
-	if value.GeoNameID != 0 {
-		return fmt.Sprintf("id:%d", value.GeoNameID)
-	}
-	return "city:" + strings.ToLower(value.Name) + "\x00" + value.Timezone
-}
-
-func (m *model) sortCitiesPreservingSelection() {
-	if !m.sortMode.valid() {
-		m.sortMode = sortNameAscending
-	}
-	var selectedIdentity string
-	if m.selected >= 0 && m.selected < len(m.cities) {
-		selectedIdentity = cityIdentity(m.cities[m.selected])
-	}
-	sort.SliceStable(m.cities, func(first, second int) bool {
-		return cityComesBefore(m.cities[first], m.cities[second], m.sortMode, m.now)
+	return saveWatchlistCmd(m.configPath, watchlistConfig{
+		Cities:            m.cities,
+		Sort:              m.sortMode,
+		ShowUTC:           m.showUTC,
+		DaylightTimezone:  m.daylightTimezone,
+		DaylightCityName:  m.daylightCityName,
+		DaylightMode:      m.daylightMode,
+		Columns:           m.columns,
+		TimezoneNameStyle: m.timezoneNameStyle,
+		DateFormat:        m.dateFormat,
+		TimeFormat:        m.timeFormat,
 	})
-	if selectedIdentity == "" {
-		m.selected = min(m.selected, max(0, len(m.cities)-1))
-		return
-	}
-	for index, value := range m.cities {
-		if cityIdentity(value) == selectedIdentity {
-			m.selected = index
-			return
-		}
-	}
-	m.selected = min(m.selected, max(0, len(m.cities)-1))
-}
-
-func cityComesBefore(left, right city, mode sortMode, now time.Time) bool {
-	if !mode.valid() {
-		mode = sortNameAscending
-	}
-	leftLocation, leftErr := time.LoadLocation(left.Timezone)
-	rightLocation, rightErr := time.LoadLocation(right.Timezone)
-	leftOffset, rightOffset := 0, 0
-	if leftErr == nil {
-		_, leftOffset = now.In(leftLocation).Zone()
-	}
-	if rightErr == nil {
-		_, rightOffset = now.In(rightLocation).Zone()
-	}
-	if mode == sortOffsetAscending || mode == sortOffsetDescending {
-		if leftErr != rightErr {
-			return leftErr == nil
-		}
-		if leftOffset != rightOffset {
-			if mode == sortOffsetDescending {
-				return leftOffset > rightOffset
-			}
-			return leftOffset < rightOffset
-		}
-	}
-	leftName := strings.ToLower(left.Name)
-	rightName := strings.ToLower(right.Name)
-	if leftName != rightName {
-		if mode == sortNameDescending {
-			return leftName > rightName
-		}
-		return leftName < rightName
-	}
-	if left.Timezone != right.Timezone {
-		return left.Timezone < right.Timezone
-	}
-	return left.GeoNameID < right.GeoNameID
 }
 
 func main() {
@@ -921,6 +524,7 @@ func main() {
 		showUTC:           watchlist.ShowUTC,
 		daylightTimezone:  watchlist.DaylightTimezone,
 		daylightCityName:  watchlist.DaylightCityName,
+		daylightMode:      watchlist.DaylightMode,
 		columns:           watchlist.Columns,
 		timezoneNameStyle: watchlist.TimezoneNameStyle,
 		dateFormat:        watchlist.DateFormat,

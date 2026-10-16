@@ -17,6 +17,7 @@ type watchlistConfig struct {
 	ShowUTC           bool               `json:"show_utc,omitempty"`
 	DaylightTimezone  string             `json:"daylight_timezone,omitempty"`
 	DaylightCityName  string             `json:"daylight_city_name,omitempty"`
+	DaylightMode      daylightMode       `json:"daylight_mode,omitempty"`
 	Columns           []columnPreference `json:"columns,omitempty"`
 	TimezoneNameStyle timezoneNameStyle  `json:"timezone_name_style,omitempty"`
 	DateFormat        string             `json:"date_format,omitempty"`
@@ -43,7 +44,7 @@ func loadWatchlistConfig(configPath, legacyPath string, defaults []city) (watchl
 		return watchlistConfig{}, fmt.Errorf("load legacy city config: %w", err)
 	}
 
-	return watchlistConfig{Cities: append([]city(nil), defaults...), Sort: sortNameAscending, DaylightTimezone: "UTC", DaylightCityName: "UTC", Columns: defaultColumnPreferences(), TimezoneNameStyle: timezoneNameIANA, DateFormat: defaultDateLayout, TimeFormat: defaultTimeLayout}, nil
+	return watchlistConfig{Cities: append([]city(nil), defaults...), Sort: sortNameAscending, DaylightTimezone: "UTC", DaylightCityName: "UTC", DaylightMode: daylightModeCalendar, Columns: defaultColumnPreferences(), TimezoneNameStyle: timezoneNameIANA, DateFormat: defaultDateLayout, TimeFormat: defaultTimeLayout}, nil
 }
 
 func loadWatchlist(configPath, legacyPath string, defaults []city) ([]city, error) {
@@ -58,7 +59,7 @@ func readWatchlist(filename string) (watchlistConfig, error) {
 	}
 	var legacy []city
 	if err := json.Unmarshal(contents, &legacy); err == nil && legacy != nil {
-		return watchlistConfig{Cities: legacy, Sort: sortNameAscending, DaylightTimezone: "UTC", DaylightCityName: "UTC", Columns: defaultColumnPreferences(), TimezoneNameStyle: timezoneNameIANA, DateFormat: defaultDateLayout, TimeFormat: defaultTimeLayout}, nil
+		return watchlistConfig{Cities: legacy, Sort: sortNameAscending, DaylightTimezone: "UTC", DaylightCityName: "UTC", DaylightMode: daylightModeCalendar, Columns: defaultColumnPreferences(), TimezoneNameStyle: timezoneNameIANA, DateFormat: defaultDateLayout, TimeFormat: defaultTimeLayout}, nil
 	}
 	var config watchlistConfig
 	if err := json.Unmarshal(contents, &config); err != nil {
@@ -71,6 +72,7 @@ func readWatchlist(filename string) (watchlistConfig, error) {
 		config.Sort = sortNameAscending
 	}
 	config.DaylightTimezone, config.DaylightCityName = normalizeDaylightReference(config.DaylightTimezone, config.DaylightCityName)
+	config.DaylightMode = normalizeDaylightMode(config.DaylightMode)
 	config.Columns = normalizeColumnPreferences(config.Columns)
 	if !config.TimezoneNameStyle.valid() {
 		config.TimezoneNameStyle = timezoneNameIANA
@@ -90,6 +92,7 @@ func saveWatchlist(filename string, config watchlistConfig) error {
 		config.Sort = sortNameAscending
 	}
 	config.DaylightTimezone, config.DaylightCityName = normalizeDaylightReference(config.DaylightTimezone, config.DaylightCityName)
+	config.DaylightMode = normalizeDaylightMode(config.DaylightMode)
 	config.Columns = normalizeColumnPreferences(config.Columns)
 	if !config.TimezoneNameStyle.valid() {
 		config.TimezoneNameStyle = timezoneNameIANA
@@ -152,10 +155,18 @@ func normalizeDaylightReference(timezone, cityName string) (string, string) {
 	return timezone, cityName
 }
 
-func saveCitiesCmd(filename string, cities []city, sortMode sortMode, showUTC bool, daylightTimezone, daylightCityName string, columns []columnPreference, timezoneStyle timezoneNameStyle, dateFormat, timeFormat string) tea.Cmd {
-	snapshot := append([]city(nil), cities...)
-	columnSnapshot := append([]columnPreference(nil), columns...)
+func normalizeDaylightMode(mode daylightMode) daylightMode {
+	if !mode.valid() {
+		return daylightModeCalendar
+	}
+	return mode
+}
+
+func saveWatchlistCmd(filename string, config watchlistConfig) tea.Cmd {
+	snapshot := config
+	snapshot.Cities = append([]city(nil), config.Cities...)
+	snapshot.Columns = append([]columnPreference(nil), config.Columns...)
 	return func() tea.Msg {
-		return citySaveResultMsg{err: saveWatchlist(filename, watchlistConfig{Cities: snapshot, Sort: sortMode, ShowUTC: showUTC, DaylightTimezone: daylightTimezone, DaylightCityName: daylightCityName, Columns: columnSnapshot, TimezoneNameStyle: timezoneStyle, DateFormat: dateFormat, TimeFormat: timeFormat})}
+		return citySaveResultMsg{err: saveWatchlist(filename, snapshot)}
 	}
 }

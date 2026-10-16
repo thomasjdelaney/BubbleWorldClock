@@ -30,6 +30,24 @@ type lightInterval struct {
 	level lightLevel
 }
 
+type daylightMode string
+
+const (
+	daylightModeCalendar daylightMode = "calendar_day"
+	daylightModeRolling  daylightMode = "rolling_24h"
+)
+
+func (mode daylightMode) valid() bool {
+	return mode == daylightModeCalendar || mode == daylightModeRolling
+}
+
+func (mode daylightMode) label() string {
+	if mode == daylightModeRolling {
+		return "Moving daylight, fixed now marker"
+	}
+	return "Static daylight, moving now marker"
+}
+
 func daylightWindow(now time.Time, location *time.Location) (time.Time, time.Time) {
 	if location == nil {
 		location = time.UTC
@@ -37,6 +55,13 @@ func daylightWindow(now time.Time, location *time.Location) (time.Time, time.Tim
 	localNow := now.In(location)
 	start := time.Date(localNow.Year(), localNow.Month(), localNow.Day(), 0, 0, 0, 0, location)
 	return start, start.AddDate(0, 0, 1)
+}
+
+func daylightWindowForMode(now time.Time, location *time.Location, mode daylightMode) (time.Time, time.Time) {
+	if mode == daylightModeRolling {
+		return now.Add(-12 * time.Hour), now.Add(12 * time.Hour)
+	}
+	return daylightWindow(now, location)
 }
 
 func cityCoordinates(value city, catalog []cityRecord) (float64, float64, bool) {
@@ -153,6 +178,10 @@ func lightAt(at time.Time, intervals []lightInterval) lightLevel {
 }
 
 func renderDaylightBar(intervals []lightInterval, hasCoordinates bool, width int, utcDayStart, utcDayEnd, now time.Time, rowIndex int, styles map[lightLevel]lipgloss.Style, markerStyle, mutedStyle lipgloss.Style) string {
+	return renderDaylightBarForMode(intervals, hasCoordinates, width, utcDayStart, utcDayEnd, now, daylightModeCalendar, rowIndex, styles, markerStyle, mutedStyle)
+}
+
+func renderDaylightBarForMode(intervals []lightInterval, hasCoordinates bool, width int, utcDayStart, utcDayEnd, now time.Time, mode daylightMode, rowIndex int, styles map[lightLevel]lipgloss.Style, markerStyle, mutedStyle lipgloss.Style) string {
 	if width <= 0 {
 		return ""
 	}
@@ -160,7 +189,7 @@ func renderDaylightBar(intervals []lightInterval, hasCoordinates bool, width int
 		return withRowBackground(mutedStyle, rowIndex).Render(padRight(truncate("no coordinates", width), width))
 	}
 
-	markerIndex := daylightMarkerIndex(now, utcDayStart, utcDayEnd, width)
+	markerIndex := daylightMarkerIndexForMode(now, utcDayStart, utcDayEnd, width, mode)
 	var bar strings.Builder
 	for index := range width {
 		at := utcDayStart.Add(time.Duration((float64(index) + 0.5) / float64(width) * float64(utcDayEnd.Sub(utcDayStart))))
@@ -182,6 +211,16 @@ func renderDaylightBar(intervals []lightInterval, hasCoordinates bool, width int
 		bar.WriteString(withRowBackground(styles[level], rowIndex).Render(glyph))
 	}
 	return bar.String()
+}
+
+func daylightMarkerIndexForMode(now, windowStart, windowEnd time.Time, width int, mode daylightMode) int {
+	if width <= 0 {
+		return 0
+	}
+	if mode == daylightModeRolling {
+		return width / 2
+	}
+	return daylightMarkerIndex(now, windowStart, windowEnd, width)
 }
 
 func daylightMarkerIndex(now, utcDayStart, utcDayEnd time.Time, width int) int {

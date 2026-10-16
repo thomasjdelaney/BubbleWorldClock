@@ -1,7 +1,6 @@
 package main
 
 import (
-	"fmt"
 	"strings"
 	"time"
 
@@ -114,7 +113,8 @@ func (m model) viewClock() string {
 	if err != nil {
 		daylightLocation = time.UTC
 	}
-	daylightStart, daylightEnd := daylightWindow(m.now, daylightLocation)
+	daylightMode := normalizeDaylightMode(m.daylightMode)
+	daylightStart, daylightEnd := daylightWindowForMode(m.now, daylightLocation, daylightMode)
 	lines := []string{titleStyle.Render(truncate("Bubble World Clock", contentWidth))}
 	if !compact {
 		lines = append(lines, mutedStyle.Render(strings.Repeat("─", tableWidth)))
@@ -207,7 +207,7 @@ func (m model) viewClock() string {
 		daylightBar := ""
 		if barWidth > 0 {
 			intervals, hasCoordinates := cityDaylightIntervalsInWindow(city, m.catalog, location, daylightStart, daylightEnd)
-			daylightBar = renderDaylightBar(intervals, hasCoordinates, barWidth, daylightStart, daylightEnd, m.now, rowIndex, barStyles, markerStyle, mutedStyle)
+			daylightBar = renderDaylightBarForMode(intervals, hasCoordinates, barWidth, daylightStart, daylightEnd, m.now, daylightMode, rowIndex, barStyles, markerStyle, mutedStyle)
 		}
 		nameStyle := cityStyle
 		if compact {
@@ -229,211 +229,6 @@ func (m model) viewClock() string {
 func (m model) daylightLegendCityName() string {
 	_, cityName := normalizeDaylightReference(m.daylightTimezone, m.daylightCityName)
 	return cityName
-}
-
-func (m model) viewDaylightSettings() string {
-	width := m.width
-	if width <= 0 {
-		width = 80
-	}
-	contentWidth := max(1, width-2)
-	titleStyle := lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("86"))
-	mutedStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("245"))
-	lines := []string{
-		titleStyle.Render("Daylight settings"),
-		mutedStyle.Render(strings.Repeat("─", contentWidth)),
-		"Now marker: " + m.daylightLegendCityName() + " (" + normalizeDaylightTimezone(m.daylightTimezone) + ")",
-		"The selected time zone sets the daylight timeline's local day.",
-	}
-	if m.status != "" {
-		lines = append(lines, "", mutedStyle.Render(truncate(m.status, contentWidth)))
-	}
-	lines = append(lines, "", mutedStyle.Render("c change time zone | esc back"))
-	return strings.Join(lines, "\n")
-}
-
-func normalizeDaylightTimezone(timezone string) string {
-	timezone, _ = normalizeDaylightReference(timezone, "UTC")
-	return timezone
-}
-
-func (m model) viewManage() string {
-	width := m.width
-	if width <= 0 {
-		width = 80
-	}
-	contentWidth := max(1, width-2)
-	titleStyle := lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("86"))
-	mutedStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("245"))
-	selectedStyle := lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("229")).Background(lipgloss.Color("24"))
-	lines := []string{
-		titleStyle.Render("Manage cities"),
-		mutedStyle.Render(strings.Repeat("─", contentWidth)),
-	}
-	if len(m.cities) == 0 {
-		lines = append(lines, "No cities on your clock. Press a to search the city catalog.")
-	} else {
-		for i, city := range m.cities {
-			marker := "  "
-			style := lipgloss.NewStyle()
-			if i == m.selected {
-				marker = "> "
-				style = selectedStyle
-			}
-			line := marker + m.cityLabel(i) + "  " + city.Timezone
-			lines = append(lines, style.Render(truncate(line, contentWidth)))
-		}
-	}
-	if m.status != "" {
-		lines = append(lines, "", mutedStyle.Render(truncate(m.status, contentWidth)))
-	}
-	lines = append(lines, "", mutedStyle.Render(truncate("sort: "+m.sortMode.label(), contentWidth)))
-	utcState := "off"
-	if m.showUTC {
-		utcState = "on"
-	}
-	lines = append(lines, mutedStyle.Render(truncate("UTC reference: "+utcState, contentWidth)))
-	lines = append(lines, mutedStyle.Render(truncate("up/down select | o sort | u toggle UTC reference | a add | d remove | esc back", contentWidth)))
-	lines = append(lines, mutedStyle.Render("c columns | f formats"))
-	return strings.Join(lines, "\n")
-}
-
-func (m model) viewColumns() string {
-	width := m.width
-	if width <= 0 {
-		width = 80
-	}
-	contentWidth := max(1, width-2)
-	titleStyle := lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("86"))
-	mutedStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("245"))
-	selectedStyle := lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("229")).Background(lipgloss.Color("24"))
-	lines := []string{
-		titleStyle.Render("Manage columns"),
-		mutedStyle.Render(strings.Repeat("─", contentWidth)),
-		"  [x] City (fixed first)",
-	}
-	for index, preference := range normalizeColumnPreferences(m.columns) {
-		marker := "  "
-		style := lipgloss.NewStyle()
-		if index == m.selectedColumn {
-			marker = "> "
-			style = selectedStyle
-		}
-		visible := " "
-		if preference.Visible {
-			visible = "x"
-		}
-		line := fmt.Sprintf("%s[%s] %s", marker, visible, clockColumnFor(preference.ID).Name)
-		lines = append(lines, style.Render(truncate(line, contentWidth)))
-	}
-	if m.status != "" {
-		lines = append(lines, "", mutedStyle.Render(truncate(m.status, contentWidth)))
-	}
-	lines = append(lines, "", mutedStyle.Render(truncate("up/down select | space toggle | ←/→ reorder | r reset | d daylight settings | esc back", contentWidth)))
-	lines = append(lines, mutedStyle.Render("m cities | f formats"))
-	return strings.Join(lines, "\n")
-}
-
-func (m model) viewFormats() string {
-	width := m.width
-	if width <= 0 {
-		width = 80
-	}
-	contentWidth := max(1, width-2)
-	titleStyle := lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("86"))
-	sectionStyle := lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("229"))
-	mutedStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("245"))
-	selectedStyle := lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("229")).Background(lipgloss.Color("24"))
-	sample := formatPreviewTime()
-	lines := []string{
-		titleStyle.Render("Date, time, and timezone formats"),
-		mutedStyle.Render(strings.Repeat("─", contentWidth)),
-	}
-	for _, setting := range []formatSetting{dateFormatSetting, timeFormatSetting, timezoneFormatSetting} {
-		lines = append(lines, sectionStyle.Render(formatSettingName(setting)))
-		options := formatOptionsFor(setting)
-		currentIndex := m.currentFormatOptionIndex(setting)
-		selectedIndex := currentIndex
-		if setting == m.selectedFormat {
-			selectedIndex = m.selectedFormatOption
-		}
-		for index, option := range options {
-			marker := "  "
-			style := lipgloss.NewStyle()
-			if setting == m.selectedFormat && index == selectedIndex {
-				marker = "> "
-				style = selectedStyle
-			}
-			checked := " "
-			if index == currentIndex {
-				checked = "x"
-			}
-			line := fmt.Sprintf("%s[%s] %-24s %s", marker, checked, option.Name, m.formatOptionExample(setting, option, index, sample))
-			lines = append(lines, style.Render(truncate(line, contentWidth)))
-		}
-	}
-	if m.formatEditing {
-		lines = append(lines, "", "Custom Go time layout:", m.formatInput.View())
-	}
-	hint := "Date: Mon/Monday weekday, Jan/January month, 2/02 day, 2006 year."
-	if m.selectedFormat == timeFormatSetting {
-		hint = "Time: 15=24h, 3/03=12h, 04=minute, 05=second, PM=marker, MST=zone."
-	} else if m.selectedFormat == timezoneFormatSetting {
-		hint = "Abbreviations depend on the date (Berlin: CET in winter, CEST in summer)."
-	}
-	lines = append(lines, mutedStyle.Render(truncate(hint, contentWidth)))
-	if m.formatEditing {
-		lines = append(lines, mutedStyle.Render(truncate("Go reference: Mon Jan 2 15:04:05 MST 2006.", contentWidth)))
-	}
-	if m.status != "" {
-		lines = append(lines, "", mutedStyle.Render(truncate(m.status, contentWidth)))
-	}
-	controls := "up/down setting | ←/→ option | enter edit Custom | esc back"
-	if m.formatEditing {
-		controls = "type Go layout | enter save | esc cancel"
-	}
-	lines = append(lines, "", mutedStyle.Render(truncate(controls, contentWidth)))
-	if !m.formatEditing {
-		lines = append(lines, mutedStyle.Render("m cities | c columns"))
-	}
-	return strings.Join(lines, "\n")
-}
-
-func formatSettingName(setting formatSetting) string {
-	switch setting {
-	case dateFormatSetting:
-		return "Date format"
-	case timeFormatSetting:
-		return "Time format"
-	default:
-		return "Timezone name"
-	}
-}
-
-func (m model) formatOptionExample(setting formatSetting, option formatOption, index int, sample time.Time) string {
-	switch setting {
-	case dateFormatSetting, timeFormatSetting:
-		layout := option.Layout
-		if layout == "" {
-			if m.formatEditing && m.selectedFormat == setting {
-				layout = m.formatInput.Value()
-			} else if m.currentFormatOptionIndex(setting) == index {
-				layout = m.currentFormatLayout(setting)
-			}
-			if layout == "" {
-				return "Enter a custom layout"
-			}
-		}
-		return sample.Format(layout)
-	default:
-		if index == 0 {
-			return timezoneNameValue("Europe/Berlin", sample, timezoneNameIANA)
-		}
-		berlin, _ := time.LoadLocation("Europe/Berlin")
-		winterName, _ := time.Date(2026, time.January, 2, 12, 0, 0, 0, time.UTC).In(berlin).Zone()
-		summerName, _ := time.Date(2026, time.July, 2, 12, 0, 0, 0, time.UTC).In(berlin).Zone()
-		return "Berlin: " + winterName + " / " + summerName
-	}
 }
 
 func timezoneNameValue(timezone string, localTime time.Time, style timezoneNameStyle) string {

@@ -2,25 +2,44 @@
 
 A terminal world clock built with [Bubble Tea](https://github.com/charmbracelet/bubbletea). Track local dates, times, and UTC offsets for cities from a bundled offline catalog.
 
-Clock rows include a configurable daylight timeline. Each bar spans the current day in the selected reference time zone and shows night, twilight, daylight, and the current time using each city's coordinates. The legend names the city used for the reference time zone.
+Each clock row can include a daylight timeline. Choose a calendar-day view, where daylight stays in place and the now marker moves across the reference city's local day, or a rolling 24-hour view, where the timeline moves beneath a fixed center marker. The legend identifies the reference city.
 
 ![Bubble World Clock table showing city names, local dates and times, UTC offsets, daylight timelines, and the UTC reference row](images/bubble-world-clock-table-view.png)
 
 ## Use
 
-Run `bubble-world-clock` (or `bubble-world-clock.exe` on Windows).
+Run `bubble-world-clock` (or `bubble-world-clock.exe` on Windows). On the clock screen:
 
-- `bubble-world-clock update`: check GitHub for a newer release and install it in place when available.
-- `bubble-world-clock version`: print the installed version.
-- On the clock screen, `m` opens city management, `c` opens column settings, `f` opens date, time, and timezone formats, `?` shows help, and `q` or `Ctrl+C` quits.
-- In city management, `a` adds a city, `d` removes the selected city, `o` cycles the sort order, and `u` toggles the UTC reference row. UTC is off by default and follows the active sort order when enabled. Use `c` for columns, `f` for formats, and the arrow keys or `j`/`k` to move the selection.
-- In column settings, use up/down to select a column, Space to show or hide it, left/right to reorder it, `r` to restore defaults, and `d` on DAYLIGHT to open its settings. City stays first and visible. Press `m` for city management, `f` for formats, or Esc to return to the clock screen.
-- In Daylight settings, press `c` to choose a city whose time zone sets the timeline's current day and the `now (<city>)` legend label. The city does not need to be on your clock. UTC is the default.
-- In format settings, use up/down to choose date, time, or timezone names; left/right to choose a format; and Enter on Custom to edit a Go time layout. Go layouts use the reference `Mon Jan 2 15:04:05 MST 2006`; the screen explains the date/time tokens and previews each choice. Press `m` for city management, `c` for columns, or Esc to return to the clock screen. IANA timezone IDs display underscores as spaces; local abbreviations vary with the date.
-- In the city picker, type a city name to search, or use `country:Japan` or `tz:Paris` to filter by country or timezone. Press `Enter` to add a city in city management, or choose the reference time zone in Daylight settings; `Esc` returns to the screen that opened the picker.
-- If saving fails, press `s` to retry.
+- Press `m` to manage cities, `c` to manage columns, or `f` to set date, time, and timezone formats.
+- Press `?` for help. Press `q` or `Ctrl+C` to quit.
+- Run `bubble-world-clock update` to check for and install a newer release. Run `bubble-world-clock version` to print the installed version.
 
-Your city list, sort order, UTC setting, daylight reference, column preferences, and display formats are saved in the operating system's user config directory under `BubbleWorldClock/cities.json`. The offline city catalog is derived from GeoNames `cities15000` under CC BY 4.0; see [data/README.md](data/README.md) for attribution.
+### Manage cities
+
+Use the arrow keys or `j`/`k` to select a city. Press `a` to add one, `d` to remove one, `o` to change the sort order, or `u` to show or hide the UTC reference row. UTC is hidden by default and follows the selected sort order. Press `c` for columns, `f` for formats, or Esc to return to the clock.
+
+### Manage columns and daylight
+
+In column settings, use up/down to select a column, Space to show or hide it, and left/right to change its order. City stays first and visible. Press `r` to restore the default columns or `d` to open Daylight settings; the DAYLIGHT column does not need to be selected. Press `m` for city management, `f` for formats, or Esc to return to the clock.
+
+In Daylight settings, use up/down to select a setting. On Timeline mode, left/right switches between:
+
+- **Static daylight, moving now marker:** shows the reference city's local calendar day. The marker moves with the current time.
+- **Moving daylight, fixed now marker:** shows a rolling 24-hour timeline centered on the current time.
+
+Press `c` to choose the reference city. Its time zone sets the calendar-day view, and its name appears in the `now (<city>)` legend. It does not need to be on your clock. The defaults are UTC and the calendar-day mode. Press Esc to return to column settings.
+
+### Set date, time, and timezone formats
+
+Use up/down to select date, time, or timezone names, and left/right to choose a format. On Custom, press Enter to edit a Go time layout using the reference `Mon Jan 2 15:04:05 MST 2006`; the screen shows the tokens and a preview. IANA timezone IDs display underscores as spaces. Local timezone abbreviations vary with the date. Press `m` for city management, `c` for columns, or Esc to return to the clock.
+
+### Choose a city
+
+In the city picker, type a city name to search. Use `country:Japan` or `tz:Paris` to filter by country or timezone. Press Enter to add the selected city or set it as the Daylight reference, depending on which screen opened the picker. Press Esc to return to that screen.
+
+If saving fails, press `s` to retry.
+
+Your city list, sort order, UTC setting, daylight settings, column preferences, and display formats are saved in the operating system's user config directory at `BubbleWorldClock/cities.json`. The offline city catalog is derived from GeoNames `cities15000` under CC BY 4.0; see [data/README.md](data/README.md) for attribution.
 
 ## Install
 
