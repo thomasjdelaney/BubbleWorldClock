@@ -33,12 +33,18 @@ func (m model) View() tea.View {
 		content = m.viewColumns()
 	case formatScreen:
 		content = m.viewFormats()
+	case daylightScreen:
+		content = m.viewDaylightSettings()
 	case pickerScreen:
 		content = m.picker.View()
 		if m.status != "" {
 			content += "\n\n" + m.status
 		}
-		content += "\n\n" + truncate("country:Japan | tz:Paris | enter add | esc back", max(1, m.width))
+		pickerAction := "enter add"
+		if m.pickerPurpose == daylightTimezonePicker {
+			pickerAction = "enter choose time zone"
+		}
+		content += "\n\n" + truncate("country:Japan | tz:Paris | "+pickerAction+" | esc back", max(1, m.width))
 	default:
 		content = m.viewClock()
 	}
@@ -104,8 +110,11 @@ func (m model) viewClock() string {
 	mutedStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("245"))
 	borderStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("238"))
 
-	utcDayStart := time.Date(m.now.UTC().Year(), m.now.UTC().Month(), m.now.UTC().Day(), 0, 0, 0, 0, time.UTC)
-	utcDayEnd := utcDayStart.Add(24 * time.Hour)
+	daylightLocation, err := time.LoadLocation(m.daylightTimezone)
+	if err != nil {
+		daylightLocation = time.UTC
+	}
+	daylightStart, daylightEnd := daylightWindow(m.now, daylightLocation)
 	lines := []string{titleStyle.Render(truncate("Bubble World Clock", contentWidth))}
 	if !compact {
 		lines = append(lines, mutedStyle.Render(strings.Repeat("─", tableWidth)))
@@ -197,8 +206,8 @@ func (m model) viewClock() string {
 		}
 		daylightBar := ""
 		if barWidth > 0 {
-			intervals, hasCoordinates := cityDaylightIntervals(city, m.catalog, location, utcDayStart)
-			daylightBar = renderDaylightBar(intervals, hasCoordinates, barWidth, utcDayStart, utcDayEnd, m.now, rowIndex, barStyles, markerStyle, mutedStyle)
+			intervals, hasCoordinates := cityDaylightIntervalsInWindow(city, m.catalog, location, daylightStart, daylightEnd)
+			daylightBar = renderDaylightBar(intervals, hasCoordinates, barWidth, daylightStart, daylightEnd, m.now, rowIndex, barStyles, markerStyle, mutedStyle)
 		}
 		nameStyle := cityStyle
 		if compact {
@@ -210,11 +219,42 @@ func (m model) viewClock() string {
 		appendUTCRow(utcIndex)
 	}
 	if barWidth > 0 {
-		legend := barStyles[lightNight].Render(nightDotGlyph+nightStarGlyph) + " night  " + barStyles[lightTwilight].Render(twilightGlyph) + " twilight  " + barStyles[lightDay].Render(daylightGlyph) + " daylight  " + markerStyle.Render(nowGlyph) + " now"
+		legend := barStyles[lightNight].Render(nightDotGlyph+nightStarGlyph) + " night  " + barStyles[lightTwilight].Render(twilightGlyph) + " twilight  " + barStyles[lightDay].Render(daylightGlyph) + " daylight  " + markerStyle.Render(nowGlyph) + " now (" + m.daylightLegendCityName() + ")"
 		lines = append(lines, mutedStyle.Render(truncate(legend, contentWidth)))
 	}
 	lines = append(lines, mutedStyle.Render(truncate("m manage cities | c manage columns | f manage formats", contentWidth)))
 	return strings.Join(lines, "\n")
+}
+
+func (m model) daylightLegendCityName() string {
+	_, cityName := normalizeDaylightReference(m.daylightTimezone, m.daylightCityName)
+	return cityName
+}
+
+func (m model) viewDaylightSettings() string {
+	width := m.width
+	if width <= 0 {
+		width = 80
+	}
+	contentWidth := max(1, width-2)
+	titleStyle := lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("86"))
+	mutedStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("245"))
+	lines := []string{
+		titleStyle.Render("Daylight settings"),
+		mutedStyle.Render(strings.Repeat("─", contentWidth)),
+		"Now marker: " + m.daylightLegendCityName() + " (" + normalizeDaylightTimezone(m.daylightTimezone) + ")",
+		"The selected time zone sets the daylight timeline's local day.",
+	}
+	if m.status != "" {
+		lines = append(lines, "", mutedStyle.Render(truncate(m.status, contentWidth)))
+	}
+	lines = append(lines, "", mutedStyle.Render("c change time zone | esc back"))
+	return strings.Join(lines, "\n")
+}
+
+func normalizeDaylightTimezone(timezone string) string {
+	timezone, _ = normalizeDaylightReference(timezone, "UTC")
+	return timezone
 }
 
 func (m model) viewManage() string {
@@ -289,7 +329,7 @@ func (m model) viewColumns() string {
 	if m.status != "" {
 		lines = append(lines, "", mutedStyle.Render(truncate(m.status, contentWidth)))
 	}
-	lines = append(lines, "", mutedStyle.Render(truncate("up/down select | space toggle | ←/→ reorder | r reset | esc back", contentWidth)))
+	lines = append(lines, "", mutedStyle.Render(truncate("up/down select | space toggle | ←/→ reorder | r reset | d daylight settings | esc back", contentWidth)))
 	lines = append(lines, mutedStyle.Render("m cities | f formats"))
 	return strings.Join(lines, "\n")
 }

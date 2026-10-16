@@ -86,6 +86,14 @@ const (
 	pickerScreen
 	columnsScreen
 	formatScreen
+	daylightScreen
+)
+
+type pickerPurpose uint8
+
+const (
+	addCityPicker pickerPurpose = iota
+	daylightTimezonePicker
 )
 
 type keyMap struct {
@@ -110,6 +118,8 @@ type keyMap struct {
 	PreviousFormatOption key.Binding
 	NextFormatOption     key.Binding
 	ResetColumns         key.Binding
+	DaylightSettings     key.Binding
+	ChangeDaylightZone   key.Binding
 }
 
 func newKeyMap() keyMap {
@@ -198,6 +208,14 @@ func newKeyMap() keyMap {
 			key.WithKeys("r"),
 			key.WithHelp("r", "reset columns"),
 		),
+		DaylightSettings: key.NewBinding(
+			key.WithKeys("d"),
+			key.WithHelp("d", "daylight settings"),
+		),
+		ChangeDaylightZone: key.NewBinding(
+			key.WithKeys("c"),
+			key.WithHelp("c", "change time zone"),
+		),
 	}
 }
 
@@ -221,7 +239,7 @@ func (k screenHelpKeyMap) FullHelp() [][]key.Binding {
 	case columnsScreen:
 		return [][]key.Binding{
 			{k.Quit, k.ToggleHelp, k.Back},
-			{k.CursorUp, k.CursorDown, k.ToggleColumn, k.MoveColumnLeft, k.MoveColumnRight, k.Manage, k.ManageFormats},
+			{k.CursorUp, k.CursorDown, k.ToggleColumn, k.MoveColumnLeft, k.MoveColumnRight, k.DaylightSettings, k.Manage, k.ManageFormats},
 			{k.ResetColumns, k.RetrySave},
 		}
 	case formatScreen:
@@ -230,6 +248,8 @@ func (k screenHelpKeyMap) FullHelp() [][]key.Binding {
 			{k.CursorUp, k.CursorDown, k.PreviousFormatOption, k.EditFormat, k.Manage, k.ManageColumns},
 			{k.RetrySave},
 		}
+	case daylightScreen:
+		return [][]key.Binding{{k.Quit, k.ToggleHelp, k.Back, k.ChangeDaylightZone, k.RetrySave}}
 	default:
 		return [][]key.Binding{{k.Quit, k.ToggleHelp, k.Manage, k.ManageColumns, k.ManageFormats}}
 	}
@@ -239,11 +259,15 @@ type model struct {
 	cities               []city
 	catalog              []cityRecord
 	picker               list.Model
+	pickerPurpose        pickerPurpose
+	pickerReturnScreen   screen
 	screen               screen
 	selected             int
 	configPath           string
 	sortMode             sortMode
 	showUTC              bool
+	daylightTimezone     string
+	daylightCityName     string
 	columns              []columnPreference
 	timezoneNameStyle    timezoneNameStyle
 	dateFormat           string
@@ -319,7 +343,7 @@ func (m model) updateKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	switch m.screen {
 	case pickerScreen:
 		if key.Matches(msg, m.keys.Back) {
-			m.screen = manageScreen
+			m.screen = m.pickerReturnScreen
 			m.status = ""
 			return m, nil
 		}
@@ -340,6 +364,9 @@ func (m model) updateKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 				m.picker.SetFilterState(list.Filtering)
 				m.status = "No matching city"
 				return m, nil
+			}
+			if m.pickerPurpose == daylightTimezonePicker {
+				return m.setDaylightReference(selected)
 			}
 			return m.addCity(selected)
 		}
@@ -391,6 +418,8 @@ func (m model) updateKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		return m.updateColumnKey(msg)
 	case formatScreen:
 		return m.updateFormatKey(msg)
+	case daylightScreen:
+		return m.updateDaylightKey(msg)
 
 	default:
 		switch {
@@ -570,6 +599,8 @@ func (m model) updateColumnKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		m.status = ""
 	case key.Matches(msg, m.keys.ManageFormats):
 		m = m.openFormats()
+	case key.Matches(msg, m.keys.DaylightSettings):
+		m = m.openDaylightSettings()
 	case key.Matches(msg, m.keys.CursorUp):
 		if m.selectedColumn > 0 {
 			m.selectedColumn--
@@ -617,6 +648,14 @@ func (m model) updateColumnKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 }
 
 func (m model) openPicker() (tea.Model, tea.Cmd) {
+	return m.openCityPicker(addCityPicker, manageScreen)
+}
+
+func (m model) openDaylightPicker() (tea.Model, tea.Cmd) {
+	return m.openCityPicker(daylightTimezonePicker, daylightScreen)
+}
+
+func (m model) openCityPicker(purpose pickerPurpose, returnScreen screen) (tea.Model, tea.Cmd) {
 	items := make([]list.Item, len(m.catalog))
 	for i, record := range m.catalog {
 		items[i] = record
@@ -625,15 +664,65 @@ func (m model) openPicker() (tea.Model, tea.Cmd) {
 	delegate.ShowDescription = true
 	m.picker = list.New(items, delegate, max(1, m.width), max(1, m.height-6))
 	m.picker.Filter = cityFilter
-	m.picker.Title = "Add a city"
+	if purpose == daylightTimezonePicker {
+		m.picker.Title = "Choose a city time zone"
+	} else {
+		m.picker.Title = "Add a city"
+	}
 	m.picker.SetShowHelp(false)
 	m.picker.SetStatusBarItemName("city", "cities")
 	m.picker.DisableQuitKeybindings()
 	m.picker.SetFilterText("")
 	m.picker.SetFilterState(list.Filtering)
+	m.pickerPurpose = purpose
+	m.pickerReturnScreen = returnScreen
 	m.screen = pickerScreen
 	m.status = ""
 	return m, textinput.Blink
+}
+
+func (m model) openDaylightSettings() model {
+	m.screen = daylightScreen
+	m.status = ""
+	return m
+}
+
+func (m model) updateDaylightKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
+	switch {
+	case key.Matches(msg, m.keys.Quit):
+		return m, tea.Quit
+	case key.Matches(msg, m.keys.ToggleHelp):
+		m.help.ShowAll = !m.help.ShowAll
+	case key.Matches(msg, m.keys.Back):
+		m.screen = columnsScreen
+		m.status = ""
+	case key.Matches(msg, m.keys.ChangeDaylightZone):
+		if m.saving {
+			m.status = "Wait for the current save to finish"
+			return m, nil
+		}
+		return m.openDaylightPicker()
+	case key.Matches(msg, m.keys.RetrySave) && m.unsaved && !m.saving:
+		return m, m.startSave()
+	}
+	return m, nil
+}
+
+func (m model) setDaylightReference(record cityRecord) (tea.Model, tea.Cmd) {
+	if m.saving {
+		m.screen = daylightScreen
+		m.status = "Wait for the current save to finish"
+		return m, nil
+	}
+	if _, err := time.LoadLocation(record.Timezone); err != nil {
+		m.screen = daylightScreen
+		m.status = "Catalog timezone is invalid: " + record.Timezone
+		return m, nil
+	}
+	m.daylightTimezone = record.Timezone
+	m.daylightCityName = record.Name
+	m.screen = daylightScreen
+	return m, m.startSave()
 }
 
 func (m model) addCity(record cityRecord) (tea.Model, tea.Cmd) {
@@ -707,7 +796,7 @@ func (m *model) startSave() tea.Cmd {
 	m.saving = true
 	m.unsaved = true
 	m.status = "Saving changes..."
-	return saveCitiesCmd(m.configPath, m.cities, m.sortMode, m.showUTC, m.columns, m.timezoneNameStyle, m.dateFormat, m.timeFormat)
+	return saveCitiesCmd(m.configPath, m.cities, m.sortMode, m.showUTC, m.daylightTimezone, m.daylightCityName, m.columns, m.timezoneNameStyle, m.dateFormat, m.timeFormat)
 }
 
 func cityIdentity(value city) string {
@@ -830,6 +919,8 @@ func main() {
 		configPath:        configPath,
 		sortMode:          watchlist.Sort,
 		showUTC:           watchlist.ShowUTC,
+		daylightTimezone:  watchlist.DaylightTimezone,
+		daylightCityName:  watchlist.DaylightCityName,
 		columns:           watchlist.Columns,
 		timezoneNameStyle: watchlist.TimezoneNameStyle,
 		dateFormat:        watchlist.DateFormat,

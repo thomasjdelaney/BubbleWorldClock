@@ -199,7 +199,7 @@ func TestUTCReferenceFollowsActiveSortOrder(t *testing.T) {
 			for _, label := range test.want {
 				position := strings.Index(view, label)
 				if label == "UTC" {
-					position = strings.LastIndex(view, label)
+					position = strings.LastIndex(view, "\x1b[1;38;5;214")
 				}
 				if position <= lastPosition {
 					t.Fatalf("clock row %q appears out of order in %q", label, view)
@@ -229,9 +229,11 @@ func TestWatchlistRoundTripsSortModeAndLoadsLegacyArrays(t *testing.T) {
 	directory := t.TempDir()
 	configPath := filepath.Join(directory, "config", "cities.json")
 	want := watchlistConfig{
-		Cities:  []city{{Name: "Tokyo", Timezone: "Asia/Tokyo"}},
-		Sort:    sortOffsetDescending,
-		ShowUTC: true,
+		Cities:           []city{{Name: "Tokyo", Timezone: "Asia/Tokyo"}},
+		Sort:             sortOffsetDescending,
+		ShowUTC:          true,
+		DaylightTimezone: "America/Los_Angeles",
+		DaylightCityName: "Los Angeles",
 		Columns: []columnPreference{
 			{ID: columnDaylight, Visible: true},
 			{ID: columnTime, Visible: false},
@@ -251,7 +253,7 @@ func TestWatchlistRoundTripsSortModeAndLoadsLegacyArrays(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got.Sort != want.Sort || got.ShowUTC != want.ShowUTC || got.TimezoneNameStyle != want.TimezoneNameStyle || got.DateFormat != want.DateFormat || got.TimeFormat != want.TimeFormat || len(got.Cities) != 1 || got.Cities[0] != want.Cities[0] || !reflect.DeepEqual(got.Columns, want.Columns) {
+	if got.Sort != want.Sort || got.ShowUTC != want.ShowUTC || got.DaylightTimezone != want.DaylightTimezone || got.DaylightCityName != want.DaylightCityName || got.TimezoneNameStyle != want.TimezoneNameStyle || got.DateFormat != want.DateFormat || got.TimeFormat != want.TimeFormat || len(got.Cities) != 1 || got.Cities[0] != want.Cities[0] || !reflect.DeepEqual(got.Columns, want.Columns) {
 		t.Fatalf("watchlist=%#v, want %#v", got, want)
 	}
 
@@ -267,15 +269,22 @@ func TestWatchlistRoundTripsSortModeAndLoadsLegacyArrays(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if legacy.Sort != sortNameAscending || legacy.ShowUTC || legacy.TimezoneNameStyle != timezoneNameIANA || legacy.DateFormat != defaultDateLayout || legacy.TimeFormat != defaultTimeLayout || len(legacy.Cities) != 1 || !reflect.DeepEqual(legacy.Columns, defaultColumnPreferences()) {
+	if legacy.Sort != sortNameAscending || legacy.ShowUTC || legacy.DaylightTimezone != "UTC" || legacy.DaylightCityName != "UTC" || legacy.TimezoneNameStyle != timezoneNameIANA || legacy.DateFormat != defaultDateLayout || legacy.TimeFormat != defaultTimeLayout || len(legacy.Cities) != 1 || !reflect.DeepEqual(legacy.Columns, defaultColumnPreferences()) {
 		t.Fatalf("legacy config=%#v, want name ascending default", legacy)
 	}
 	if err := os.WriteFile(configPath, []byte(`{"cities":[],"sort":"name_asc"}`), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	omitted, err := readWatchlist(configPath)
-	if err != nil || omitted.ShowUTC || omitted.TimezoneNameStyle != timezoneNameIANA || omitted.DateFormat != defaultDateLayout || omitted.TimeFormat != defaultTimeLayout || !reflect.DeepEqual(omitted.Columns, defaultColumnPreferences()) {
+	if err != nil || omitted.ShowUTC || omitted.DaylightTimezone != "UTC" || omitted.DaylightCityName != "UTC" || omitted.TimezoneNameStyle != timezoneNameIANA || omitted.DateFormat != defaultDateLayout || omitted.TimeFormat != defaultTimeLayout || !reflect.DeepEqual(omitted.Columns, defaultColumnPreferences()) {
 		t.Fatalf("watchlist omitted preferences=%#v err=%v, want current defaults", omitted, err)
+	}
+	if err := os.WriteFile(configPath, []byte(`{"cities":[],"daylight_timezone":"Invalid/Zone","daylight_city_name":"Broken"}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	invalid, err := readWatchlist(configPath)
+	if err != nil || invalid.DaylightTimezone != "UTC" || invalid.DaylightCityName != "UTC" {
+		t.Fatalf("invalid daylight reference=%q (%q), err=%v; want UTC defaults", invalid.DaylightTimezone, invalid.DaylightCityName, err)
 	}
 }
 
@@ -640,6 +649,60 @@ func TestPickerFiltersAndAddsCatalogCity(t *testing.T) {
 	}
 }
 
+func TestDaylightManagerSelectsTimezoneWithoutAddingCity(t *testing.T) {
+	m := testModel([]city{{Name: "London", Timezone: "Europe/London"}})
+	m.height = 24
+	m.configPath = filepath.Join(t.TempDir(), "cities.json")
+	m.columns = defaultColumnPreferences()
+	m.screen = columnsScreen
+	// Keep a non-DAYLIGHT column selected; the shortcut opens settings globally.
+	m.selectedColumn = 0
+	m.catalog = []cityRecord{
+		{GeoNameID: 1, Name: "Munich", Country: "Germany", Timezone: "Europe/Berlin"},
+		{GeoNameID: 2, Name: "Tokyo", Country: "Japan", Timezone: "Asia/Tokyo"},
+	}
+	updated, _ := m.Update(tea.KeyPressMsg(tea.Key{Text: "d", Code: 'd'}))
+	settings := updated.(model)
+	if settings.screen != daylightScreen {
+		t.Fatalf("d on DAYLIGHT opened screen %d, want Daylight settings", settings.screen)
+	}
+	updated, _ = settings.Update(tea.KeyPressMsg(tea.Key{Text: "c", Code: 'c'}))
+	picker := updated.(model)
+	if picker.screen != pickerScreen || picker.pickerPurpose != daylightTimezonePicker {
+		t.Fatalf("change time zone opened picker with purpose %d on screen %d", picker.pickerPurpose, picker.screen)
+	}
+	picker.picker.SetFilterText("Munich")
+	updated, cmd := picker.Update(tea.KeyPressMsg(tea.Key{Code: tea.KeyEnter}))
+	selected := updated.(model)
+	if selected.screen != daylightScreen || selected.daylightTimezone != "Europe/Berlin" || selected.daylightCityName != "Munich" {
+		t.Fatalf("daylight reference selection = screen %d, %q (%q)", selected.screen, selected.daylightTimezone, selected.daylightCityName)
+	}
+	if len(selected.cities) != 1 || selected.cities[0].Name != "London" || cmd == nil {
+		t.Fatalf("selection changed clock cities or skipped saving: cities=%#v cmd=%v", selected.cities, cmd != nil)
+	}
+	updated, _ = selected.Update(cmd())
+	if saved := updated.(model); saved.unsaved {
+		t.Fatal("saved daylight reference remained unsaved")
+	}
+	config, err := readWatchlist(m.configPath)
+	if err != nil || config.DaylightTimezone != "Europe/Berlin" || config.DaylightCityName != "Munich" {
+		t.Fatalf("saved daylight reference = %q (%q), err=%v", config.DaylightTimezone, config.DaylightCityName, err)
+	}
+}
+
+func TestDaylightPickerCancelReturnsToSettings(t *testing.T) {
+	m := testModel(nil)
+	m.height = 20
+	m.catalog = []cityRecord{{Name: "Paris", Timezone: "Europe/Paris"}}
+	updated, _ := m.openDaylightSettings().openDaylightPicker()
+	picker := updated.(model)
+	updated, _ = picker.Update(tea.KeyPressMsg(tea.Key{Code: tea.KeyEsc}))
+	returned := updated.(model)
+	if returned.screen != daylightScreen || returned.daylightTimezone != "" {
+		t.Fatalf("cancel returned screen=%d timezone=%q, want settings and no change", returned.screen, returned.daylightTimezone)
+	}
+}
+
 func TestPickerTypingDoesNotQuitAndCatalogIDsPreventDuplicates(t *testing.T) {
 	entry := cityRecord{GeoNameID: 42, Name: "Example City", Country: "Example Country", Timezone: "UTC"}
 	m := testModel([]city{{GeoNameID: 42, Name: "Example City", Country: "Example Country", Timezone: "UTC"}})
@@ -902,6 +965,34 @@ func TestCityDaylightIntervalsHandleDaylightSavingDate(t *testing.T) {
 	}
 }
 
+func TestDaylightWindowUsesReferenceLocalCalendarDayAcrossDST(t *testing.T) {
+	location, err := time.LoadLocation("America/New_York")
+	if err != nil {
+		t.Fatal(err)
+	}
+	checks := []struct {
+		name string
+		now  time.Time
+		want time.Duration
+	}{
+		{name: "spring forward", now: time.Date(2026, time.March, 8, 12, 0, 0, 0, location), want: 23 * time.Hour},
+		{name: "fall back", now: time.Date(2026, time.November, 1, 12, 0, 0, 0, location), want: 25 * time.Hour},
+	}
+	for _, check := range checks {
+		t.Run(check.name, func(t *testing.T) {
+			start, end := daylightWindow(check.now, location)
+			if got := end.Sub(start); got != check.want {
+				t.Fatalf("daylight window length = %s, want %s", got, check.want)
+			}
+			startDate := start.In(location)
+			endDate := end.In(location)
+			if startDate.Hour() != 0 || endDate.Hour() != 0 || startDate.Day() == endDate.Day() {
+				t.Fatalf("window does not run between local midnights: %s to %s", startDate, endDate)
+			}
+		})
+	}
+}
+
 func TestCityDaylightIntervalsHandlePolarDayAndNight(t *testing.T) {
 	location, err := time.LoadLocation("Europe/Oslo")
 	if err != nil {
@@ -933,11 +1024,18 @@ func TestCityClockShowsDaylightBarInBothLayouts(t *testing.T) {
 	m.catalog = []cityRecord{{Name: "Tokyo", Timezone: "Asia/Tokyo", Latitude: 35.6762, Longitude: 139.6503, CoordinatesKnown: true}}
 
 	full := m.View().Content
-	for _, want := range []string{"DAYLIGHT", "UTC", "twilight", "daylight", "now", "│"} {
+	for _, want := range []string{"DAYLIGHT", "UTC", "twilight", "daylight", "now (UTC)", "│"} {
 		if !strings.Contains(full, want) {
 			t.Errorf("full view is missing %q: %q", want, full)
 		}
 	}
+	m.daylightTimezone = "Asia/Tokyo"
+	m.daylightCityName = "Tokyo"
+	if view := m.View().Content; !strings.Contains(view, "now (Tokyo)") {
+		t.Fatalf("legend does not identify the selected daylight reference city: %q", view)
+	}
+	m.daylightTimezone = ""
+	m.daylightCityName = ""
 	if !strings.Contains(full, "\x1b[38;5;117;40mTokyo") {
 		t.Fatal("full layout changed the city-name color")
 	}

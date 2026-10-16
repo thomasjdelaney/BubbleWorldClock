@@ -30,6 +30,15 @@ type lightInterval struct {
 	level lightLevel
 }
 
+func daylightWindow(now time.Time, location *time.Location) (time.Time, time.Time) {
+	if location == nil {
+		location = time.UTC
+	}
+	localNow := now.In(location)
+	start := time.Date(localNow.Year(), localNow.Month(), localNow.Day(), 0, 0, 0, 0, location)
+	return start, start.AddDate(0, 0, 1)
+}
+
 func cityCoordinates(value city, catalog []cityRecord) (float64, float64, bool) {
 	for _, record := range catalog {
 		if value.GeoNameID != 0 && record.GeoNameID == value.GeoNameID {
@@ -69,18 +78,27 @@ func padRight(value string, width int) string {
 }
 
 func cityDaylightIntervals(value city, catalog []cityRecord, location *time.Location, utcDayStart time.Time) ([]lightInterval, bool) {
+	return cityDaylightIntervalsInWindow(value, catalog, location, utcDayStart, utcDayStart.Add(24*time.Hour))
+}
+
+func cityDaylightIntervalsInWindow(value city, catalog []cityRecord, location *time.Location, windowStart, windowEnd time.Time) ([]lightInterval, bool) {
 	latitude, longitude, ok := cityCoordinates(value, catalog)
 	if !ok {
 		return nil, false
 	}
+	if !windowEnd.After(windowStart) {
+		return nil, true
+	}
 
-	// Cover the UTC date even when its first hours fall on the previous local day.
-	localDate := utcDayStart.In(location)
+	// Cover every city-local date intersecting the selected reference day's instant window.
+	localDate := windowStart.In(location)
 	year, month, day := localDate.Date()
 	baseDate := time.Date(year, month, day, 12, 0, 0, 0, location)
-	intervals := make([]lightInterval, 0, 6)
-	for offset := 0; offset <= 1; offset++ {
-		date := baseDate.AddDate(0, 0, offset)
+	localEnd := windowEnd.Add(-time.Nanosecond).In(location)
+	endYear, endMonth, endDay := localEnd.Date()
+	endDate := time.Date(endYear, endMonth, endDay, 12, 0, 0, 0, location)
+	intervals := make([]lightInterval, 0, 8)
+	for date := baseDate; !date.After(endDate); date = date.AddDate(0, 0, 1) {
 		year, month, day := date.Date()
 		rise, set := sunrise.SunriseSunset(latitude, longitude, year, month, day)
 		civilRise, civilSet := sunrise.TimeOfElevation(latitude, longitude, -6, year, month, day)
@@ -109,14 +127,13 @@ func cityDaylightIntervals(value city, catalog []cityRecord, location *time.Loca
 		}
 	}
 
-	utcDayEnd := utcDayStart.Add(24 * time.Hour)
 	clipped := intervals[:0]
 	for _, interval := range intervals {
-		if interval.start.Before(utcDayStart) {
-			interval.start = utcDayStart
+		if interval.start.Before(windowStart) {
+			interval.start = windowStart
 		}
-		if interval.end.After(utcDayEnd) {
-			interval.end = utcDayEnd
+		if interval.end.After(windowEnd) {
+			interval.end = windowEnd
 		}
 		if interval.start.Before(interval.end) {
 			clipped = append(clipped, interval)
