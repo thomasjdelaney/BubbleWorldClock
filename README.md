@@ -107,7 +107,7 @@ Linux users can also install from the `.deb` or `.rpm` packages on the [releases
 
 ## Thanks
 
-Thanks to testers [Brendan Nolan](https://github.com/BrendanNolan), warpworld, and [VeryDave](https://www.twitch.tv/verydave) for their helpful suggestions and feedback.
+Thanks to testers [Ashley Tyrer](https://github.com/AshleyTyrer), [Brendan Nolan](https://github.com/BrendanNolan), warpworld, and [VeryDave](https://www.twitch.tv/verydave) for their helpful suggestions and feedback.
 
 ## Develop
 
